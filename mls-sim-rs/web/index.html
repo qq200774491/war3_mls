@@ -4,17 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MLS Simulator</title>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <header>
         <h1>MLS Simulator</h1>
-        <span class="subtitle">本地多开模拟测试环境</span>
+        <span class="subtitle">Rust Edition</span>
+        <span class="ws-status disconnected" id="ws-status">Disconnected</span>
     </header>
 
     <div class="container">
-        <!-- 左侧：房间列表 -->
         <aside class="sidebar">
             <div class="panel-header">
                 <h2>Rooms</h2>
@@ -23,14 +22,12 @@
             <div id="room-list"></div>
         </aside>
 
-        <!-- 右侧：房间详情 -->
         <main class="main-content" id="main-content">
             <div class="placeholder" id="no-room-selected">
                 <p>Select or create a room to begin</p>
             </div>
 
             <div id="room-detail" style="display:none">
-                <!-- 房间信息栏 -->
                 <div class="room-header">
                     <div>
                         <h2 id="room-title"></h2>
@@ -44,7 +41,6 @@
                     </div>
                 </div>
 
-                <!-- 玩家面板 -->
                 <div class="section">
                     <div class="panel-header">
                         <h3>Players</h3>
@@ -52,7 +48,6 @@
                     <div id="player-list" class="player-grid"></div>
                 </div>
 
-                <!-- 操作面板：事件发送 + 状态查看 -->
                 <div class="two-col">
                     <div class="section">
                         <h3>Send Event</h3>
@@ -84,7 +79,6 @@
                     </div>
                 </div>
 
-                <!-- 日志 + 出站事件 -->
                 <div class="section">
                     <div class="tab-bar">
                         <button class="tab active" onclick="switchTab(this, 'log-panel')">Logs</button>
@@ -108,13 +102,12 @@
         </main>
     </div>
 
-    <!-- 创建房间弹窗 -->
     <div class="modal-overlay" id="create-modal" style="display:none">
         <div class="modal">
             <h2>Create Room</h2>
             <div class="form-group">
                 <label>Script Directory</label>
-                <input type="text" id="new-script-dir" placeholder="D:/code2/mls/参考/mls-master/demo/apidemo/script">
+                <input type="text" id="new-script-dir" placeholder="D:/path/to/script">
             </div>
             <div class="form-group">
                 <label>Mode ID</label>
@@ -137,6 +130,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/app.js"></script>
 </body>
 </html>

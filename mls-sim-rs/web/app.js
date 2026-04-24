@@ -1,31 +1,64 @@
-// MLS Simulator Frontend
+// MLS Simulator Frontend (Native WebSocket)
 
 const API = '';
-let socket = null;
+let ws = null;
 let currentRoomId = null;
 let logEntries = [];
 let eventEntries = [];
+let wsReconnectTimer = null;
 
-// ---- Socket.IO ----
+// ---- WebSocket ----
 
-function initSocket() {
-    socket = io();
-    socket.on('log', (data) => {
-        if (data.room_id === currentRoomId) {
-            appendLog(data);
+function initWebSocket() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${location.host}/ws`;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+        updateWsStatus(true);
+        if (currentRoomId) {
+            ws.send(JSON.stringify({ type: 'join_room', room_id: currentRoomId }));
         }
-    });
-    socket.on('out_event', (data) => {
-        if (data.room_id === currentRoomId) {
-            appendOutEvent(data);
-        }
-    });
+    };
+
+    ws.onmessage = (evt) => {
+        try {
+            const msg = JSON.parse(evt.data);
+            if (msg.type === 'log' && msg.data && msg.data.room_id === currentRoomId) {
+                appendLog(msg.data);
+            } else if (msg.type === 'out_event' && msg.data && msg.data.room_id === currentRoomId) {
+                appendOutEvent(msg.data);
+            }
+        } catch (e) {}
+    };
+
+    ws.onclose = () => {
+        updateWsStatus(false);
+        wsReconnectTimer = setTimeout(initWebSocket, 2000);
+    };
+
+    ws.onerror = () => {
+        ws.close();
+    };
+}
+
+function updateWsStatus(connected) {
+    const el = document.getElementById('ws-status');
+    if (connected) {
+        el.textContent = 'Connected';
+        el.className = 'ws-status connected';
+    } else {
+        el.textContent = 'Disconnected';
+        el.className = 'ws-status disconnected';
+    }
 }
 
 function joinRoom(roomId) {
-    if (socket) {
-        if (currentRoomId) socket.emit('leave_room', { room_id: currentRoomId });
-        socket.emit('join_room', { room_id: roomId });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        if (currentRoomId) {
+            ws.send(JSON.stringify({ type: 'leave_room', room_id: currentRoomId }));
+        }
+        ws.send(JSON.stringify({ type: 'join_room', room_id: roomId }));
     }
 }
 
@@ -54,6 +87,11 @@ async function refreshRoomList() {
         `;
         list.appendChild(div);
     });
+
+    // Auto-select first room if none selected
+    if (!currentRoomId && rooms.length > 0) {
+        selectRoom(rooms[0].id);
+    }
 }
 
 // ---- Select Room ----
@@ -322,16 +360,14 @@ function switchTab(btn, panelId) {
 // ---- Init ----
 
 document.addEventListener('DOMContentLoaded', () => {
-    initSocket();
+    initWebSocket();
     refreshRoomList();
 
-    // Default presets
     addPreset('testapi', '');
     addPreset('buy_tower', '');
     addPreset('kill_unit', '1');
     addPreset('msdata', '');
     addPreset('pong', '');
 
-    // Auto-refresh room list every 3s
     setInterval(refreshRoomList, 3000);
 });

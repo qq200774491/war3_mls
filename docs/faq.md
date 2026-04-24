@@ -1,34 +1,55 @@
 # FAQ
 
-## 模拟器启动失败
+## 编译失败
 
-先确认 Python 版本和依赖：
+确认 Rust 工具链已安装：
 
 ```powershell
-python --version
-pip install -r mls-sim/requirements.txt
+rustup --version
+cargo --version
 ```
 
-## `lupa` 安装失败
+推荐使用 stable 最新版。如果 `mlua` 编译报错，检查是否安装了 MSVC C++ 构建工具（`rustup` 通常自动安装）。
 
-`lupa` 依赖 Python 版本和平台 wheel。建议使用 Python 3.10+，并优先选择有预编译 wheel 的版本。
+## 启动后浏览器没有自动打开
 
-## 插件提示模拟器离线
-
-确认 `mls.simulator.host`、`mls.simulator.port` 与实际启动参数一致，并访问：
+在配置文件中设置 `"auto_open_browser": true`，或手动访问：
 
 ```text
-http://127.0.0.1:5000/api/health
+http://127.0.0.1:5000
 ```
 
-## War3 没有自动进入地图
+## 端口被占用
 
-不同 War3 版本和平台启动参数可能不同。调整 `mls.war3.launchArgsTemplate`，或先使用手动打开 War3 的降级流程。
-
-## 中文路径显示异常
-
-项目文档和脚本按 UTF-8 保存。PowerShell 查看时建议显式使用 UTF-8：
+更换端口：
 
 ```powershell
-Get-Content -Encoding utf8 README.md
+mls-sim.exe --port 5001
 ```
+
+## 云脚本没有加载
+
+检查脚本目录下是否存在 `main.lua`。模拟器加载的入口文件固定为 `main.lua`。
+
+## WebSocket 显示 Disconnected
+
+Web 仪表盘使用原生 WebSocket（非 Socket.IO）。确认模拟器正在运行且端口正确。WebSocket 会自动重连。
+
+## 中文路径
+
+Rust 原生支持 Unicode 路径，中文路径可以直接使用，无需特殊处理。
+
+## Bridge 轮询没有返回事件
+
+1. 确认房间状态为 `running`：`curl http://127.0.0.1:5000/api/health`
+2. 确认 `player_index` 正确。
+3. 轮询会清空队列，重复轮询空队列会返回空数组。
+4. 先发送一个事件触发脚本响应。
+
+## 存档没有保存
+
+存档在房间停止时自动保存。调用 `POST /api/rooms/{room_id}/stop` 停止房间后，存档写入 `archives/` 目录。
+
+## 日志被熔断
+
+模拟器限制 100 秒内最多 1000 条日志。减少日志频率，或仅在关键位置打印。
