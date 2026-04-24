@@ -939,7 +939,8 @@ fn room_thread(
         lua.globals()
             .set(
                 "MsSendMlEvent",
-                lua.create_function(move |_, (idx, ename, evalue): (i32, String, String)| {
+                lua.create_function(move |_, (idx, ename, evalue): (i32, String, LuaValue)| {
+                    let evalue = lua_value_to_string(&evalue);
                     let err = validate_user_event(&ename, &evalue);
                     if err != ERR_OK {
                         return Ok(err);

@@ -36,6 +36,11 @@ from typing import Any
 
 MESSAGE_ID = int(time.time() * 1000)
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def request_json(method: str, url: str, payload: dict[str, Any] | None = None) -> Any:
     data = None
@@ -81,7 +86,10 @@ def main() -> int:
     parser.add_argument("--label", default="测试消息", help="client 后面的消息名")
     parser.add_argument("--data", default="", help="回调 data；默认按字符串发送")
     parser.add_argument("--json-data", action="store_true", help="把 --data 当 JSON 解析后发送")
-    parser.add_argument("--poll", action="store_true", help="发送后顺便轮询一次脚本发给该玩家的事件")
+    parser.add_argument("--poll", action="store_true", help="发送后顺便轮询脚本发给该玩家的事件")
+    parser.add_argument("--poll-only", action="store_true", help="只轮询出站事件，不发送 client 消息")
+    parser.add_argument("--poll-times", type=int, default=1, help="轮询次数")
+    parser.add_argument("--poll-interval", type=float, default=0.1, help="轮询间隔秒数")
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -116,33 +124,37 @@ def main() -> int:
             print(f"已发送 player_info：player_uuids=[{args.platform_id!r}]")
             time.sleep(0.1)
 
-        if args.json_data:
-            callback_data: Any = json.loads(args.data)
-        else:
-            callback_data = args.data
+        if not args.poll_only:
+            if args.json_data:
+                callback_data: Any = json.loads(args.data)
+            else:
+                callback_data = args.data
 
-        war3_payload = {
-            "id": MESSAGE_ID,
-            "label": args.label,
-            "pid": args.player_index + 1,
-            "data": {"__v": callback_data, "__i": MESSAGE_ID},
-        }
-        event_payload = {
-            "room_id": room_id,
-            "player_index": args.player_index,
-            "ename": "war3_data",
-            "evalue": json.dumps(war3_payload, ensure_ascii=False),
-        }
-        event_result = request_json("POST", f"{base_url}/api/bridge/event", event_payload)
-        if not event_result.get("ok"):
-            raise RuntimeError(f"发送事件失败：{event_result}")
-        print(f"已发送 client 消息：label={args.label!r}，data={callback_data!r}")
+            war3_payload = {
+                "id": MESSAGE_ID,
+                "label": args.label,
+                "pid": args.player_index + 1,
+                "data": {"__v": callback_data, "__i": MESSAGE_ID},
+            }
+            event_payload = {
+                "room_id": room_id,
+                "player_index": args.player_index,
+                "ename": "war3_data",
+                "evalue": json.dumps(war3_payload, ensure_ascii=False),
+            }
+            event_result = request_json("POST", f"{base_url}/api/bridge/event", event_payload)
+            if not event_result.get("ok"):
+                raise RuntimeError(f"发送事件失败：{event_result}")
+            print(f"已发送 client 消息：label={args.label!r}，data={callback_data!r}")
 
-        if args.poll:
-            time.sleep(0.1)
-            polled = request_json("GET", f"{base_url}/api/bridge/poll/{room_id}/{args.player_index}")
-            print("轮询结果：")
-            print(json.dumps(polled, ensure_ascii=False, indent=2))
+        if args.poll or args.poll_only:
+            for poll_index in range(max(1, args.poll_times)):
+                if poll_index > 0 or not args.poll_only:
+                    time.sleep(args.poll_interval)
+                polled = request_json("GET", f"{base_url}/api/bridge/poll/{room_id}/{args.player_index}")
+                events = polled.get("events", [])
+                print(f"轮询结果 #{poll_index + 1}：{len(events)} 条")
+                print(json.dumps(polled, ensure_ascii=False, indent=2))
 
         print("请在 mls-sim 日志面板查看 Lua print 输出。")
         return 0

@@ -136,7 +136,7 @@ pub fn apply_saved_archives(
                 }
             }
             if let Some(v) = saved.get("played_count").and_then(|v| v.as_i64()) {
-                if player.played_count == 1 {
+                if player.played_count == 0 {
                     player.played_count = v as i32;
                 }
             }

@@ -150,7 +150,7 @@ pub fn build_players_from_config(configs: &[PlayerConfig]) -> HashMap<i32, Playe
             items: Default::default(),
             map_level: None,
             map_exp: None,
-            played_count: None,
+            played_count: Some(0),
             script_archive: None,
             common_archive: None,
             read_archive: None,

@@ -17,7 +17,7 @@ pub struct Player {
     pub map_level: i32,
     #[serde(default)]
     pub map_exp: i32,
-    #[serde(default = "default_one")]
+    #[serde(default)]
     pub played_count: i32,
     #[serde(default)]
     pub test_play_time: i32,
@@ -53,7 +53,7 @@ impl Player {
             name,
             map_level: 1,
             map_exp: 0,
-            played_count: 1,
+            played_count: 0,
             test_play_time: 0,
             joined_at: now_secs(),
             is_connected: true,
