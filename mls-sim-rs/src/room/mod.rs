@@ -119,7 +119,7 @@ pub fn validate_user_event(ename: &str, evalue: &str) -> i32 {
     if ename.starts_with('_')
         || !ename
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b':')
+            .all(|b| b.is_ascii_alphanumeric() || b == b':' || b == b'_' || !b.is_ascii())
     {
         return ERR_EVENT_KEY_INVALID;
     }
@@ -1340,6 +1340,7 @@ mod tests {
     #[test]
     fn validate_user_event_accepts_documented_boundaries() {
         assert_eq!(validate_user_event("A123:boss", ""), ERR_OK);
+        assert_eq!(validate_user_event("war3_data", ""), ERR_OK);
         assert_eq!(
             validate_user_event(&"a".repeat(32), &"b".repeat(900)),
             ERR_OK
