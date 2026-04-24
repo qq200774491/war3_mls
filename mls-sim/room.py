@@ -6,6 +6,7 @@ import re
 import threading
 import time
 import traceback
+from collections import deque
 from queue import Queue, Empty
 
 from lupa import lua53 as lua
@@ -108,6 +109,9 @@ class Room:
         self.on_log: list = []  # list of callbacks(LogEntry)
         self.on_event: list = []  # list of callbacks(OutEvent)
 
+        # per-player 出站事件队列（供 Bridge API 轮询）
+        self._out_queues: dict[int, deque] = {}
+
         # room 线程
         self._thread: threading.Thread | None = None
         self._running = False
@@ -163,6 +167,7 @@ class Room:
             self.status = "error"
             self.error_message = str(e)
             self._emit_log("ERR", "System", f"Room start failed: {e}\n{traceback.format_exc()}")
+            self._emit_out_event(-1, "_mlroomfail", str(e))
             return
 
         while self._running:
@@ -417,7 +422,16 @@ class Room:
                 self._emit_log("ERR", "Event", f"Handler error for '{ename}': {e}\n{traceback.format_exc()}")
 
     def send_event(self, ename: str, evalue: str, player_index: int):
-        """外部调用（Web UI）：向房间发送事件"""
+        """外部调用（Web UI / Bridge API）：向房间发送事件"""
+        if len(ename.encode('utf-8')) > MAX_EVENT_NAME_LEN:
+            self._emit_log("ERR", "System", f"Event name too long: {ename}")
+            return
+        if not ename.startswith('_') and not EVENT_NAME_PATTERN.match(ename):
+            self._emit_log("ERR", "System", f"Invalid event name: {ename}")
+            return
+        if len(evalue.encode('utf-8')) > MAX_EVENT_DATA_LEN:
+            self._emit_log("ERR", "System", f"Event data too long: {len(evalue.encode('utf-8'))} bytes")
+            return
         self._event_queue.put(("_dispatch_event", ename, evalue, player_index))
 
     # ---- Player API 注入 ----
@@ -625,11 +639,28 @@ class Room:
 
     def _emit_out_event(self, player_index: int, ename: str, evalue: str):
         ev = OutEvent(player_index, ename, evalue, self.id)
+        if player_index >= 0:
+            if player_index not in self._out_queues:
+                self._out_queues[player_index] = deque(maxlen=500)
+            self._out_queues[player_index].append(ev)
+        else:
+            for idx in self.players:
+                if idx not in self._out_queues:
+                    self._out_queues[idx] = deque(maxlen=500)
+                self._out_queues[idx].append(ev)
         for cb in self.on_event:
             try:
                 cb(ev)
             except Exception:
                 pass
+
+    def poll_events(self, player_index: int) -> list[dict]:
+        q = self._out_queues.get(player_index)
+        if not q:
+            return []
+        events = [e.to_dict() for e in q]
+        q.clear()
+        return events
 
     # ---- 内置事件触发 ----
 

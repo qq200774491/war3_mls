@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from copy import deepcopy
 from collections import deque
 
 from flask import Flask, request, jsonify, render_template
@@ -11,17 +12,59 @@ from flask_socketio import SocketIO, emit
 
 from room import RoomManager, Room, LogEntry, OutEvent
 from player import Player
+from storage import save_room_archives, load_player_archives, list_archives
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["SECRET_KEY"] = "mls-sim-dev"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 manager = RoomManager()
+APP_VERSION = "0.2.0"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROFILE_PATH = os.path.join(BASE_DIR, "profiles.json")
 
 # 最近日志缓存（每个房间最多保留 500 条）
 log_buffers: dict[str, deque] = {}
 event_buffers: dict[str, deque] = {}
 MAX_BUFFER = 500
+
+
+def _public_host() -> str:
+    return os.environ.get("MLS_SIM_HOST", "127.0.0.1")
+
+
+def _load_profiles() -> dict:
+    if not os.path.exists(PROFILE_PATH):
+        return {}
+    try:
+        with open(PROFILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_profiles(profiles: dict):
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        json.dump(profiles, f, ensure_ascii=False, indent=2)
+
+
+def _bridge_config_text(base_url: str, room_id: str, player_index: int, poll_interval: float) -> str:
+    return f'''-- MLS Bridge 本地测试配置
+-- 由 mls-sim / VSCode 插件生成
+return {{
+    base_url = "{base_url}",
+    room_id = "{room_id}",
+    player_index = {player_index},
+    poll_interval = {poll_interval},
+    req_sign_enable = false,
+}}
+'''
+
+
+def _profile_id(name: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in name.strip())
+    return safe or f"profile-{int(time.time())}"
 
 
 def _attach_callbacks(room: Room):
@@ -65,6 +108,20 @@ def handle_leave_room(data):
 
 
 # ---- REST API: 房间管理 ----
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({
+        "ok": True,
+        "name": "mls-sim",
+        "version": APP_VERSION,
+        "host": _public_host(),
+        "room_count": len(manager.rooms),
+        "rooms": manager.list_rooms(),
+        "cwd": os.getcwd(),
+        "base_dir": BASE_DIR,
+    })
+
 
 @app.route("/api/rooms", methods=["POST"])
 def create_room():
@@ -111,6 +168,60 @@ def create_room():
     return jsonify(room.to_dict()), 201
 
 
+# ---- REST API: 开发 Profile / Bridge 配置 ----
+
+@app.route("/api/profiles", methods=["GET"])
+def list_profiles():
+    profiles = _load_profiles()
+    return jsonify(list(profiles.values()))
+
+
+@app.route("/api/profiles", methods=["POST"])
+def create_profile():
+    data = request.get_json(silent=True) or {}
+    script_dir = data.get("script_dir", "")
+    if not script_dir or not os.path.isdir(script_dir):
+        return jsonify({"error": f"Invalid script_dir: {script_dir}"}), 400
+
+    name = data.get("name") or os.path.basename(os.path.abspath(script_dir))
+    profile = {
+        "id": _profile_id(name),
+        "name": name,
+        "script_dir": os.path.abspath(script_dir),
+        "mode_id": int(data.get("mode_id", 0)),
+        "players": deepcopy(data.get("players") or [{"index": 0, "name": "Player_0"}]),
+        "war3": deepcopy(data.get("war3") or {}),
+        "created_at": int(time.time()),
+        "updated_at": int(time.time()),
+    }
+
+    profiles = _load_profiles()
+    profiles[profile["id"]] = profile
+    _save_profiles(profiles)
+    return jsonify(profile), 201
+
+
+@app.route("/api/bridge/config", methods=["POST"])
+def bridge_config():
+    data = request.get_json(silent=True) or {}
+    room_id = data.get("room_id", "")
+    if room_id and not manager.get_room(room_id):
+        return jsonify({"error": f"Room not found: {room_id}"}), 404
+
+    port = int(data.get("port", request.host.split(":")[-1] if ":" in request.host else 5000))
+    base_url = data.get("base_url") or f"http://{_public_host()}:{port}"
+    player_index = int(data.get("player_index", 0))
+    poll_interval = float(data.get("poll_interval", 0.05))
+    text = _bridge_config_text(base_url, room_id, player_index, poll_interval)
+    return jsonify({
+        "base_url": base_url,
+        "room_id": room_id,
+        "player_index": player_index,
+        "poll_interval": poll_interval,
+        "content": text,
+    })
+
+
 @app.route("/api/rooms", methods=["GET"])
 def list_rooms():
     return jsonify(manager.list_rooms())
@@ -149,6 +260,11 @@ def stop_room(room_id):
         return jsonify({"error": "Room not found"}), 404
     reason = (request.get_json(silent=True) or {}).get("reason", "GameEnd")
     room.stop(reason)
+    try:
+        path = save_room_archives(room)
+        print(f"  Archives saved: {path}")
+    except Exception as e:
+        print(f"  Archive save failed: {e}")
     return jsonify({"ok": True})
 
 
@@ -261,6 +377,80 @@ def get_state(room_id):
     return jsonify(room.to_dict())
 
 
+# ---- REST API: 存档持久化 ----
+
+@app.route("/api/archives", methods=["GET"])
+def get_archives():
+    return jsonify(list_archives())
+
+
+@app.route("/api/archives/<script_name>", methods=["GET"])
+def get_archive(script_name):
+    archives = load_player_archives(script_name)
+    return jsonify(archives)
+
+
+# ---- REST API: Bridge（客户端通讯桥）----
+
+@app.route("/api/bridge/login", methods=["POST"])
+def bridge_login():
+    """客户端登录到指定房间"""
+    data = request.get_json(silent=True) or {}
+    room_id = data.get("room_id", "")
+    player_index = int(data.get("player_index", 0))
+    name = data.get("name", "")
+
+    room = manager.get_room(room_id)
+    if not room:
+        return jsonify({"error": f"Room not found: {room_id}"}), 404
+
+    p = room.get_player(player_index)
+    if not p:
+        p = Player(player_index, name or f"Player_{player_index}")
+        room.add_player(p)
+
+    return jsonify({"ok": True, "player_index": player_index, "room_id": room_id})
+
+
+@app.route("/api/bridge/event", methods=["POST"])
+def bridge_event():
+    """客户端发送事件给云脚本"""
+    data = request.get_json(silent=True) or {}
+    room_id = data.get("room_id", "")
+    player_index = int(data.get("player_index", 0))
+    ename = data.get("ename", "")
+    evalue = data.get("evalue", "")
+
+    if not room_id or not ename:
+        return jsonify({"error": "room_id and ename are required"}), 400
+
+    room = manager.get_room(room_id)
+    if not room:
+        return jsonify({"error": f"Room not found: {room_id}"}), 404
+
+    room.send_event(ename, evalue, player_index)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/bridge/poll/<room_id>/<int:player_index>", methods=["GET"])
+def bridge_poll(room_id, player_index):
+    """客户端轮询云脚本返回的事件"""
+    room = manager.get_room(room_id)
+    if not room:
+        return jsonify({"error": f"Room not found: {room_id}"}), 404
+
+    events = room.poll_events(player_index)
+    return jsonify({"events": events})
+
+
+@app.route("/api/bridge/rooms", methods=["GET"])
+def bridge_list_rooms():
+    """客户端查询可用房间列表"""
+    rooms = manager.list_rooms()
+    result = [{"id": r["id"], "status": r["status"], "player_count": r["player_count"], "mode_id": r["mode_id"]} for r in rooms]
+    return jsonify(result)
+
+
 # ---- 页面 ----
 
 @app.route("/")
@@ -272,8 +462,10 @@ def index():
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    print(f"\n  MLS Simulator running at http://localhost:{port}\n")
-    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
+    host = sys.argv[2] if len(sys.argv) > 2 else _public_host()
+    os.environ["MLS_SIM_HOST"] = host
+    print(f"\n  MLS Simulator running at http://{host}:{port}\n")
+    socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":

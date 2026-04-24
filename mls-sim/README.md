@@ -432,4 +432,109 @@ requests.post(f"{BASE}/api/rooms/{r1['id']}/stop")
 
 ### 存档数据丢失
 
-模拟器将存档存储在内存中，进程退出后丢失。如需跨会话保留存档，在创建房间时通过 `script_archive` 字段预设存档数据。
+房间停止时存档自动保存到 `mls-sim/archives/` 目录。如需跨会话保留存档，在创建房间时通过 `script_archive` 字段预设存档数据。
+
+---
+
+## War3 客户端集成（Bridge API）
+
+Bridge API 让 War3 客户端通过 HTTP 直接与 mls-sim 通信，替代 KK 平台的 `japi.RequestExtraBooleanData(1009)` 通道。
+
+### 架构
+
+```
+War3 客户端 (Lua)                    mls-sim (Python)
+┌─────────────────┐                ┌─────────────────┐
+│ mls_bridge.lua  │── HTTP POST ──→│ /api/bridge/event│
+│                 │                │   → Lua VM 事件  │
+│                 │← HTTP GET ────│ /api/bridge/poll │
+│ 轮询 out_events │                │   ← MsSendMlEvent│
+└─────────────────┘                └─────────────────┘
+```
+
+### Bridge API 端点
+
+#### `POST /api/bridge/login`
+
+客户端登录到房间。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `room_id` | string | 房间 ID（如 `room-001`） |
+| `player_index` | int | 玩家槽位 |
+| `name` | string | 玩家昵称 |
+
+#### `POST /api/bridge/event`
+
+客户端发送事件给云脚本。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `room_id` | string | 房间 ID |
+| `player_index` | int | 玩家槽位 |
+| `ename` | string | 事件名 |
+| `evalue` | string | 事件数据 |
+
+#### `GET /api/bridge/poll/<room_id>/<player_index>`
+
+轮询云脚本发给该玩家的事件（取出后清空队列）。
+
+**响应**：`{"events": [{"ename": "...", "evalue": "...", "player_index": N, "timestamp": T}]}`
+
+#### `GET /api/bridge/rooms`
+
+查询可用房间列表。
+
+### 客户端集成步骤
+
+1. 将 `mls-sim/client/` 目录下的文件复制到你的脚本目录
+2. 修改 `mls_bridge_config.lua`，填入 mls-sim 地址和房间 ID
+3. 在 `mls_server.lua` 中切换到本地测试模式：
+
+```lua
+local IS_LOCAL_TEST = true
+
+local function send_to_server(self, channel, data)
+    if IS_LOCAL_TEST then
+        local bridge = require "mls_bridge"
+        bridge.send_raw(self:id(), channel, data)
+    else
+        japi.RequestExtraBooleanData(1009, self:handle(), channel, data, false, 0, 0, 0)
+    end
+end
+```
+
+或者直接用 `mls_server_sim.lua` 替换 `mls_server.lua`。
+
+### 多人测试
+
+**单机多开**：启动两个 War3 实例，分别配置不同的 `player_index`，连接同一个 mls-sim 房间。
+
+**局域网**：PC-A 运行 mls-sim（已绑定 `0.0.0.0`），PC-B 的 `mls_bridge_config.lua` 中 `base_url` 设为 `http://192.168.x.x:5000`。
+
+---
+
+## VS Code 集成
+
+项目已配置 `.vscode/` 目录：
+
+- **launch.json**：F5 启动 mls-sim 服务（需安装 debugpy 扩展）
+- **tasks.json**：快捷任务（启动服务、创建测试房间、查看状态）
+- **settings.json**：LuaLS 配置，指向 `mls-sim/types/` 类型定义
+
+### LuaLS 类型提示
+
+`mls-sim/types/mls_api.lua` 包含所有 MLS API 的 LuaCATS 类型注解。安装 [Lua Language Server](https://marketplace.visualstudio.com/items?itemName=sumneko.lua) 扩展后，编写云脚本时可获得完整的智能提示和参数文档。
+
+---
+
+## 存档持久化
+
+房间停止时自动将所有玩家存档保存到 `mls-sim/archives/{脚本目录名}.json`。
+
+### 存档 API
+
+| 端点 | 说明 |
+|------|------|
+| `GET /api/archives` | 列出所有已保存的存档 |
+| `GET /api/archives/<name>` | 获取指定脚本的存档数据 |
