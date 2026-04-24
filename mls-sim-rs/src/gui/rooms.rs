@@ -87,24 +87,28 @@ impl GuiApp {
         egui::SidePanel::left("room_sidebar")
             .default_width(220.0)
             .resizable(true)
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style())
-                    .inner_margin(egui::Margin::same(10.0)),
-            )
+            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::same(10.0)))
             .show(ctx, |ui: &mut egui::Ui| {
                 ui.horizontal(|ui: &mut egui::Ui| {
                     section_heading(ui, "房间列表");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{}", rooms.len()))
-                                .small()
-                                .color(egui::Color32::from_rgb(140, 148, 165)),
-                        );
-                    });
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui: &mut egui::Ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{}", rooms.len()))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(140, 148, 165)),
+                            );
+                        },
+                    );
                 });
 
                 ui.add_space(4.0);
-                let btn_text = if self.show_create_room { "收起" } else { "新建房间" };
+                let btn_text = if self.show_create_room {
+                    "收起"
+                } else {
+                    "新建房间"
+                };
                 let btn = egui::Button::new(btn_text);
                 if ui.add_sized([ui.available_width(), 28.0], btn).clicked() {
                     self.show_create_room = !self.show_create_room;
@@ -125,8 +129,7 @@ impl GuiApp {
                         });
                         ui.add_space(4.0);
                         ui.horizontal(|ui: &mut egui::Ui| {
-                            if ui.button("创建").clicked()
-                                && !self.new_room_script_dir.is_empty()
+                            if ui.button("创建").clicked() && !self.new_room_script_dir.is_empty()
                             {
                                 let script_dir = PathBuf::from(&self.new_room_script_dir);
                                 if script_dir.is_dir() {
@@ -169,13 +172,17 @@ impl GuiApp {
                         let (status_text, color) = status_label(&room.status);
 
                         let resp = ui.vertical(|ui: &mut egui::Ui| {
-                            let resp = ui.selectable_label(selected, &room.id)
+                            let resp = ui
+                                .selectable_label(selected, &room.id)
                                 .on_hover_text(&room.script_dir);
                             ui.colored_label(
                                 color,
-                                egui::RichText::new(
-                                    format!("  {} | {} 人", status_text, room.players.len())
-                                ).size(12.0),
+                                egui::RichText::new(format!(
+                                    "  {} | {} 人",
+                                    status_text,
+                                    room.players.len()
+                                ))
+                                .size(12.0),
                             );
                             resp
                         });
@@ -189,10 +196,7 @@ impl GuiApp {
 
         // ── Detail Panel ──
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::central_panel(&ctx.style())
-                    .inner_margin(egui::Margin::same(12.0)),
-            )
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin::same(12.0)))
             .show(ctx, |ui: &mut egui::Ui| {
                 let room_id = match self.selected_room_id.clone() {
                     Some(id) => id,
@@ -234,14 +238,21 @@ impl GuiApp {
                             .num_columns(2)
                             .spacing([12.0, 4.0])
                             .show(ui, |ui: &mut egui::Ui| {
-                                ui.label(egui::RichText::new("脚本:").color(egui::Color32::from_rgb(140, 148, 165)));
+                                ui.label(
+                                    egui::RichText::new("脚本:")
+                                        .color(egui::Color32::from_rgb(140, 148, 165)),
+                                );
                                 ui.label(&room_info.script_dir);
                                 ui.end_row();
-                                ui.label(egui::RichText::new("模式:").color(egui::Color32::from_rgb(140, 148, 165)));
+                                ui.label(
+                                    egui::RichText::new("模式:")
+                                        .color(egui::Color32::from_rgb(140, 148, 165)),
+                                );
                                 ui.label(room_info.mode_id.to_string());
                                 ui.end_row();
                                 ui.label(
-                                    egui::RichText::new("运行时间:").color(egui::Color32::from_rgb(140, 148, 165)),
+                                    egui::RichText::new("运行时间:")
+                                        .color(egui::Color32::from_rgb(140, 148, 165)),
                                 );
                                 ui.label(format_duration(room_info.game_time));
                                 ui.end_row();
@@ -322,7 +333,10 @@ impl GuiApp {
                                             "在线",
                                         );
                                     } else {
-                                        ui.colored_label(egui::Color32::from_rgb(140, 148, 165), "离线");
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(140, 148, 165),
+                                            "离线",
+                                        );
                                     }
                                     ui.horizontal(|ui: &mut egui::Ui| {
                                         if p.is_connected {
@@ -343,32 +357,27 @@ impl GuiApp {
                         if let Some(idx) = remove_player {
                             let manager = self.manager.read().unwrap();
                             if let Some(room) = manager.rooms.get(&room_id) {
-                                room.shared.write().unwrap().players.remove(&idx);
+                                room.exit_player(idx, "Logout".into());
                             }
                         }
                         if let Some(idx) = leave_player {
                             let manager = self.manager.read().unwrap();
                             if let Some(room) = manager.rooms.get(&room_id) {
-                                if let Some(p) =
-                                    room.shared.write().unwrap().players.get_mut(&idx)
-                                {
-                                    p.is_connected = false;
-                                }
-                                let data =
-                                    serde_json::json!({"reason": "Disconnect"}).to_string();
-                                room.send_event("_playerleave".into(), data, idx);
+                                room.leave_player(idx, "Disconnect".into());
                             }
                         }
                         if let Some(idx) = join_player {
                             let manager = self.manager.read().unwrap();
                             if let Some(room) = manager.rooms.get(&room_id) {
-                                if let Some(p) =
-                                    room.shared.write().unwrap().players.get_mut(&idx)
-                                {
-                                    p.is_connected = true;
-                                }
-                                let data = serde_json::json!({"reason": "Connect"}).to_string();
-                                room.send_event("_playerjoin".into(), data, idx);
+                                let name = room
+                                    .shared
+                                    .read()
+                                    .unwrap()
+                                    .players
+                                    .get(&idx)
+                                    .map(|p| p.name.clone())
+                                    .unwrap_or_else(|| format!("Player_{}", idx));
+                                room.join_player(idx, name, "Connect".into());
                             }
                         }
 
@@ -393,11 +402,7 @@ impl GuiApp {
                                     };
                                     let manager = self.manager.read().unwrap();
                                     if let Some(room) = manager.rooms.get(&room_id) {
-                                        room.shared
-                                            .write()
-                                            .unwrap()
-                                            .players
-                                            .insert(idx, Player::new(idx, name));
+                                        room.join_player(idx, name, "Connect".into());
                                     }
                                     self.add_player_name.clear();
                                 }
@@ -460,11 +465,14 @@ impl GuiApp {
                             {
                                 let manager = self.manager.read().unwrap();
                                 if let Some(room) = manager.rooms.get(&room_id) {
-                                    room.send_event(
+                                    let errnu = room.send_event(
                                         self.event_name.clone(),
                                         self.event_data.clone(),
                                         self.event_player_idx,
                                     );
+                                    if errnu != crate::room::ERR_OK {
+                                        tracing::warn!("Send event failed: errnu={}", errnu);
+                                    }
                                 }
                             }
                             self.event_name.clear();

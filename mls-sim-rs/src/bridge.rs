@@ -5,8 +5,7 @@ use axum::{Json, Router};
 use std::sync::{Arc, RwLock};
 
 use crate::config::AppConfig;
-use crate::player::Player;
-use crate::room::RoomManager;
+use crate::room::{RoomManager, ERR_OK, ERR_PLAYER_NOT_EXIST, ERR_ROOM_NOT_EXIST};
 
 #[derive(Clone)]
 struct BridgeState {
@@ -25,10 +24,7 @@ pub async fn run_bridge_server(
     let app = Router::new()
         .route("/api/bridge/login", post(login))
         .route("/api/bridge/event", post(event))
-        .route(
-            "/api/bridge/poll/{room_id}/{player_index}",
-            get(poll),
-        )
+        .route("/api/bridge/poll/{room_id}/{player_index}", get(poll))
         .route("/api/bridge/rooms", get(list_rooms))
         .route("/api/bridge/config", post(bridge_config))
         .route("/api/health", get(health))
@@ -65,27 +61,25 @@ async fn login(
         None => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": format!("Room not found: {}", req.room_id)})),
+                Json(serde_json::json!({
+                    "ok": false,
+                    "errnu": ERR_ROOM_NOT_EXIST,
+                    "error": format!("Room not found: {}", req.room_id),
+                })),
             );
         }
     };
-    {
-        let mut shared = room.shared.write().unwrap();
-        if !shared.players.contains_key(&req.player_index) {
-            let name = if req.name.is_empty() {
-                format!("Player_{}", req.player_index)
-            } else {
-                req.name.clone()
-            };
-            shared
-                .players
-                .insert(req.player_index, Player::new(req.player_index, name));
-        }
-    }
+    let name = if req.name.is_empty() {
+        format!("Player_{}", req.player_index)
+    } else {
+        req.name.clone()
+    };
+    let errnu = room.join_player(req.player_index, name, "Connect".to_string());
     (
         StatusCode::OK,
         Json(serde_json::json!({
-            "ok": true,
+            "ok": errnu == ERR_OK,
+            "errnu": errnu,
             "player_index": req.player_index,
             "room_id": req.room_id,
         })),
@@ -109,18 +103,29 @@ async fn event(
     if req.room_id.is_empty() || req.ename.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "room_id and ename required"})),
+            Json(serde_json::json!({
+                "ok": false,
+                "errnu": if req.room_id.is_empty() { ERR_ROOM_NOT_EXIST } else { crate::room::ERR_EVENT_KEY_LEN },
+                "error": "room_id and ename required",
+            })),
         );
     }
     let manager = state.manager.read().unwrap();
     match manager.get_room(&req.room_id) {
         Some(room) => {
-            room.send_event(req.ename, req.evalue, req.player_index);
-            (StatusCode::OK, Json(serde_json::json!({"ok": true})))
+            let errnu = room.send_event(req.ename, req.evalue, req.player_index);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"ok": errnu == ERR_OK, "errnu": errnu})),
+            )
         }
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": format!("Room not found: {}", req.room_id)})),
+            Json(serde_json::json!({
+                "ok": false,
+                "errnu": ERR_ROOM_NOT_EXIST,
+                "error": format!("Room not found: {}", req.room_id),
+            })),
         ),
     }
 }
@@ -132,12 +137,34 @@ async fn poll(
     let manager = state.manager.read().unwrap();
     match manager.get_room(&room_id) {
         Some(room) => {
+            if !room.has_player(player_index) {
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "ok": false,
+                        "errnu": ERR_PLAYER_NOT_EXIST,
+                        "events": [],
+                    })),
+                );
+            }
             let events = room.poll_events(player_index);
-            (StatusCode::OK, Json(serde_json::json!({"events": events})))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true,
+                    "errnu": ERR_OK,
+                    "events": events,
+                })),
+            )
         }
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": format!("Room not found: {}", room_id)})),
+            Json(serde_json::json!({
+                "ok": false,
+                "errnu": ERR_ROOM_NOT_EXIST,
+                "events": [],
+                "error": format!("Room not found: {}", room_id),
+            })),
         ),
     }
 }

@@ -16,12 +16,15 @@ const MAX_SCRIPT_ARCHIVE_LEN: usize = 1024 * 1024;
 const MAX_LOG_LEN: usize = 2000;
 const MAX_BUFFER: usize = 500;
 
-const ERR_OK: i32 = 0;
-const ERR_PLAYER_NOT_EXIST: i32 = 3;
-const ERR_EVENT_KEY_LEN: i32 = 4;
-const ERR_EVENT_VALUE_LEN: i32 = 6;
-const ERR_SCRIPT_ARCHIVE_TOO_LONG: i32 = 11;
-const ERR_ITEM_NOT_ENOUGH: i32 = 1259;
+pub const ERR_OK: i32 = 0;
+pub const ERR_UNKNOWN: i32 = 1;
+pub const ERR_ROOM_NOT_EXIST: i32 = 2;
+pub const ERR_PLAYER_NOT_EXIST: i32 = 3;
+pub const ERR_EVENT_KEY_LEN: i32 = 4;
+pub const ERR_EVENT_KEY_INVALID: i32 = 5;
+pub const ERR_EVENT_VALUE_LEN: i32 = 6;
+pub const ERR_SCRIPT_ARCHIVE_TOO_LONG: i32 = 11;
+pub const ERR_ITEM_NOT_ENOUGH: i32 = 1259;
 
 fn now_ts() -> f64 {
     SystemTime::now()
@@ -87,10 +90,40 @@ pub enum RoomCommand {
     TickerFire {
         ticker_id: i32,
     },
+    PlayerJoin {
+        player_index: i32,
+        name: String,
+        reason: String,
+    },
+    PlayerLeave {
+        player_index: i32,
+        reason: String,
+    },
+    PlayerExit {
+        player_index: i32,
+        reason: String,
+    },
     Stop {
         reason: String,
     },
     Destroy,
+}
+
+pub fn validate_user_event(ename: &str, evalue: &str) -> i32 {
+    if ename.is_empty() || ename.as_bytes().len() > MAX_EVENT_NAME_LEN {
+        return ERR_EVENT_KEY_LEN;
+    }
+    if evalue.as_bytes().len() > MAX_EVENT_DATA_LEN {
+        return ERR_EVENT_VALUE_LEN;
+    }
+    if ename.starts_with('_')
+        || !ename
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b':')
+    {
+        return ERR_EVENT_KEY_INVALID;
+    }
+    ERR_OK
 }
 
 pub struct RoomSharedState {
@@ -142,18 +175,27 @@ pub struct Room {
 }
 
 impl Room {
-    pub fn send_event(&self, ename: String, evalue: String, player_index: i32) {
-        if ename.as_bytes().len() > MAX_EVENT_NAME_LEN {
-            return;
+    pub fn send_event(&self, ename: String, evalue: String, player_index: i32) -> i32 {
+        let err = validate_user_event(&ename, &evalue);
+        if err != ERR_OK {
+            return err;
         }
-        if evalue.as_bytes().len() > MAX_EVENT_DATA_LEN {
-            return;
+        if player_index >= 0
+            && !self
+                .shared
+                .read()
+                .unwrap()
+                .players
+                .contains_key(&player_index)
+        {
+            return ERR_PLAYER_NOT_EXIST;
         }
         let _ = self.command_tx.send(RoomCommand::DispatchEvent {
             ename,
             evalue,
             player_index,
         });
+        ERR_OK
     }
 
     pub fn stop(&self, reason: String) {
@@ -162,6 +204,57 @@ impl Room {
 
     pub fn destroy(&self) {
         let _ = self.command_tx.send(RoomCommand::Destroy);
+    }
+
+    pub fn join_player(&self, player_index: i32, name: String, reason: String) -> i32 {
+        let _ = self.command_tx.send(RoomCommand::PlayerJoin {
+            player_index,
+            name,
+            reason,
+        });
+        ERR_OK
+    }
+
+    pub fn leave_player(&self, player_index: i32, reason: String) -> i32 {
+        if !self
+            .shared
+            .read()
+            .unwrap()
+            .players
+            .contains_key(&player_index)
+        {
+            return ERR_PLAYER_NOT_EXIST;
+        }
+        let _ = self.command_tx.send(RoomCommand::PlayerLeave {
+            player_index,
+            reason,
+        });
+        ERR_OK
+    }
+
+    pub fn exit_player(&self, player_index: i32, reason: String) -> i32 {
+        if !self
+            .shared
+            .read()
+            .unwrap()
+            .players
+            .contains_key(&player_index)
+        {
+            return ERR_PLAYER_NOT_EXIST;
+        }
+        let _ = self.command_tx.send(RoomCommand::PlayerExit {
+            player_index,
+            reason,
+        });
+        ERR_OK
+    }
+
+    pub fn has_player(&self, player_index: i32) -> bool {
+        self.shared
+            .read()
+            .unwrap()
+            .players
+            .contains_key(&player_index)
     }
 
     pub fn poll_events(&self, player_index: i32) -> Vec<serde_json::Value> {
@@ -212,6 +305,11 @@ impl RoomManager {
         let (log_tx, _) = broadcast::channel(256);
         let (out_event_tx, _) = broadcast::channel(256);
 
+        let out_queues = players
+            .keys()
+            .map(|idx| (*idx, VecDeque::with_capacity(MAX_BUFFER)))
+            .collect();
+
         let shared = Arc::new(RwLock::new(RoomSharedState {
             id: id.clone(),
             status: RoomStatus::Created,
@@ -221,7 +319,7 @@ impl RoomManager {
             start_ts: now_secs(),
             loaded_ts: 0,
             players,
-            out_queues: HashMap::new(),
+            out_queues,
             log_buffer: VecDeque::new(),
             event_buffer: VecDeque::new(),
         }));
@@ -238,7 +336,16 @@ impl RoomManager {
         std::thread::Builder::new()
             .name(format!("room-{}", id))
             .spawn(move || {
-                room_thread(room_id, script_dir, shared, command_tx, command_rx, log_tx, out_event_tx, archive_dir);
+                room_thread(
+                    room_id,
+                    script_dir,
+                    shared,
+                    command_tx,
+                    command_rx,
+                    log_tx,
+                    out_event_tx,
+                    archive_dir,
+                );
             })
             .expect("failed to spawn room thread");
 
@@ -406,8 +513,7 @@ fn room_thread(
                         } else if args.len() == 1 {
                             lua_value_to_string(&args[0])
                         } else {
-                            let string_table: mlua::Table =
-                                lua_ctx.globals().get("string")?;
+                            let string_table: mlua::Table = lua_ctx.globals().get("string")?;
                             let sf: LuaFunction = string_table.get("format")?;
                             match sf.call::<String>(args.clone()) {
                                 Ok(s) => s,
@@ -448,13 +554,9 @@ fn room_thread(
                     let cmd_tx = cmd_tx.clone();
                     let running = running.clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_secs_f64(
-                            seconds.max(0.0),
-                        ));
+                        std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.0)));
                         if running.load(Ordering::Relaxed) {
-                            let _ = cmd_tx.send(RoomCommand::TimerCallback {
-                                func_key: key,
-                            });
+                            let _ = cmd_tx.send(RoomCommand::TimerCallback { func_key: key });
                         }
                     });
                     Ok(())
@@ -479,18 +581,14 @@ fn room_thread(
                     let cmd_tx = cmd_tx.clone();
                     let running = running.clone();
 
-                    std::thread::spawn(move || {
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_secs_f64(
-                                seconds.max(0.001),
-                            ));
-                            if cancelled_clone.load(Ordering::Relaxed)
-                                || !running.load(Ordering::Relaxed)
-                            {
-                                break;
-                            }
-                            let _ = cmd_tx.send(RoomCommand::TickerFire { ticker_id });
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs_f64(seconds.max(0.001)));
+                        if cancelled_clone.load(Ordering::Relaxed)
+                            || !running.load(Ordering::Relaxed)
+                        {
+                            break;
                         }
+                        let _ = cmd_tx.send(RoomCommand::TickerFire { ticker_id });
                     });
 
                     let ticker = lua_ctx.create_table()?;
@@ -517,16 +615,17 @@ fn room_thread(
         let handlers = event_handlers.clone();
         let next_id = next_event_id.clone();
         let register = lua
-            .create_function(move |lua_ctx: &Lua, (ename, callback): (String, LuaFunction)| {
-                let id = next_id.fetch_add(1, Ordering::Relaxed);
-                let key = lua_ctx.create_registry_value(callback)?;
-                let mut h = handlers.lock().unwrap();
-                h.entry(ename).or_insert_with(Vec::new).push(EventHandler {
-                    id,
-                    func_key: key,
-                });
-                Ok(id)
-            })
+            .create_function(
+                move |lua_ctx: &Lua, (ename, callback): (String, LuaFunction)| {
+                    let id = next_id.fetch_add(1, Ordering::Relaxed);
+                    let key = lua_ctx.create_registry_value(callback)?;
+                    let mut h = handlers.lock().unwrap();
+                    h.entry(ename)
+                        .or_insert_with(Vec::new)
+                        .push(EventHandler { id, func_key: key });
+                    Ok(id)
+                },
+            )
             .unwrap();
         lua.globals().set("RegisterEvent", register).unwrap();
 
@@ -569,11 +668,7 @@ fn room_thread(
                         $name,
                         lua.create_function(move |_, idx: i32| {
                             let shared = s.read().unwrap();
-                            Ok(shared
-                                .players
-                                .get(&idx)
-                                .map(|p| p.$field)
-                                .unwrap_or(0))
+                            Ok(shared.players.get(&idx).map(|p| p.$field).unwrap_or(0))
                         })
                         .unwrap(),
                     )
@@ -689,12 +784,11 @@ fn room_thread(
                 lua.create_function(move |_lua_ctx: &Lua, (idx, iteminfo_json): (i32, String)| {
                     let trans_id = trans_counter.fetch_add(1, Ordering::Relaxed) + 1;
                     let mut shared = s.write().unwrap();
-                    let player = shared.players.get_mut(&idx);
-                    if player.is_none() {
+                    if !shared.players.contains_key(&idx) {
                         let result = serde_json::json!({
                             "trans_id": trans_id,
                             "errnu": ERR_PLAYER_NOT_EXIST,
-                            "iteminfo": iteminfo_json,
+                            "iteminfo": {},
                         });
                         drop(shared);
                         emit_out(idx, "_citemret".to_string(), result.to_string());
@@ -707,8 +801,8 @@ fn room_thread(
                             Err(_) => {
                                 let result = serde_json::json!({
                                     "trans_id": trans_id,
-                                    "errnu": 1,
-                                    "iteminfo": iteminfo_json,
+                                    "errnu": ERR_UNKNOWN,
+                                    "iteminfo": {},
                                 });
                                 drop(shared);
                                 emit_out(idx, "_citemret".to_string(), result.to_string());
@@ -761,7 +855,8 @@ fn room_thread(
                     Ok(shared
                         .players
                         .get(&idx)
-                        .and_then(|p| p.script_archive.clone()))
+                        .and_then(|p| p.script_archive.clone())
+                        .unwrap_or_default())
                 })
                 .unwrap(),
             )
@@ -771,24 +866,22 @@ fn room_thread(
         lua.globals()
             .set(
                 "MsSaveScriptArchive",
-                lua.create_function(
-                    move |_, (idx, data): (i32, mlua::MultiValue)| {
-                        let data_str = match data.iter().next() {
-                            Some(v) => lua_value_to_string(v),
-                            None => String::new(),
-                        };
-                        let mut shared = s.write().unwrap();
-                        if let Some(p) = shared.players.get_mut(&idx) {
-                            if data_str.as_bytes().len() > MAX_SCRIPT_ARCHIVE_LEN {
-                                return Ok(ERR_SCRIPT_ARCHIVE_TOO_LONG);
-                            }
-                            p.script_archive = Some(data_str);
-                            Ok(ERR_OK)
-                        } else {
-                            Ok(ERR_PLAYER_NOT_EXIST)
+                lua.create_function(move |_, (idx, data): (i32, mlua::MultiValue)| {
+                    let data_str = match data.iter().next() {
+                        Some(v) => lua_value_to_string(v),
+                        None => String::new(),
+                    };
+                    let mut shared = s.write().unwrap();
+                    if let Some(p) = shared.players.get_mut(&idx) {
+                        if data_str.as_bytes().len() > MAX_SCRIPT_ARCHIVE_LEN {
+                            return Ok(ERR_SCRIPT_ARCHIVE_TOO_LONG);
                         }
-                    },
-                )
+                        p.script_archive = Some(data_str);
+                        Ok(ERR_OK)
+                    } else {
+                        Ok(ERR_PLAYER_NOT_EXIST)
+                    }
+                })
                 .unwrap(),
             )
             .unwrap();
@@ -804,7 +897,8 @@ fn room_thread(
                             Ok(shared
                                 .players
                                 .get(&idx)
-                                .and_then(|p| p.$field.get(&key).cloned()))
+                                .and_then(|p| p.$field.get(&key).cloned())
+                                .unwrap_or_default())
                         })
                         .unwrap(),
                     )
@@ -840,17 +934,20 @@ fn room_thread(
 
     // Install Control API (MsSendMlEvent, MsEnd)
     {
+        let s = shared.clone();
         let emit_out = emit_out_event.clone();
         lua.globals()
             .set(
                 "MsSendMlEvent",
                 lua.create_function(move |_, (idx, ename, evalue): (i32, String, String)| {
-                    if ename.as_bytes().len() > MAX_EVENT_NAME_LEN {
-                        return Ok(ERR_EVENT_KEY_LEN);
+                    let err = validate_user_event(&ename, &evalue);
+                    if err != ERR_OK {
+                        return Ok(err);
                     }
-                    if evalue.as_bytes().len() > MAX_EVENT_DATA_LEN {
-                        return Ok(ERR_EVENT_VALUE_LEN);
+                    if idx >= 0 && !s.read().unwrap().players.contains_key(&idx) {
+                        return Ok(ERR_PLAYER_NOT_EXIST);
                     }
+
                     emit_out(idx, ename, evalue);
                     Ok(ERR_OK)
                 })
@@ -858,7 +955,7 @@ fn room_thread(
             )
             .unwrap();
 
-        let r = running.clone();
+        let cmd_tx = command_tx.clone();
         let emit = emit_log.clone();
         lua.globals()
             .set(
@@ -869,7 +966,7 @@ fn room_thread(
                         "System",
                         format!("MsEnd called: player={} reason={}", idx, reason),
                     );
-                    r.store(false, Ordering::Relaxed);
+                    let _ = cmd_tx.send(RoomCommand::Stop { reason });
                     Ok(ERR_OK)
                 })
                 .unwrap(),
@@ -880,8 +977,7 @@ fn room_thread(
     // Install custom require
     {
         let script_dir_clone = script_dir.clone();
-        let dir_stack: Arc<Mutex<Vec<PathBuf>>> =
-            Arc::new(Mutex::new(vec![script_dir.clone()]));
+        let dir_stack: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(vec![script_dir.clone()]));
         let loaded_modules: Arc<Mutex<HashMap<String, mlua::RegistryKey>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
@@ -937,18 +1033,17 @@ fn room_thread(
                 })?;
 
                 let code = std::fs::read_to_string(&fpath).map_err(|e| {
-                    mlua::Error::RuntimeError(format!(
-                        "failed to read {}: {}",
-                        fpath.display(),
-                        e
-                    ))
+                    mlua::Error::RuntimeError(format!("failed to read {}: {}", fpath.display(), e))
                 })?;
 
                 let mod_dir = fpath.parent().unwrap().to_path_buf();
                 dir_stack.lock().unwrap().push(mod_dir);
 
                 let chunk_name = format!("@{}", modname);
-                let result = lua_ctx.load(&code).set_name(&chunk_name).call::<LuaValue>(());
+                let result = lua_ctx
+                    .load(&code)
+                    .set_name(&chunk_name)
+                    .call::<LuaValue>(());
 
                 dir_stack.lock().unwrap().pop();
 
@@ -979,6 +1074,8 @@ fn room_thread(
     if !main_lua.exists() {
         let msg = format!("main.lua not found in {}", script_dir.display());
         emit_log("ERR", "System", msg.clone());
+        let emit_out = emit_out_event.clone();
+        emit_out(-1, "_mlroomfail".to_string(), msg.clone());
         let mut s = shared.write().unwrap();
         s.status = RoomStatus::Error;
         s.error_message = msg;
@@ -990,6 +1087,8 @@ fn room_thread(
         Err(e) => {
             let msg = format!("Failed to read main.lua: {}", e);
             emit_log("ERR", "System", msg.clone());
+            let emit_out = emit_out_event.clone();
+            emit_out(-1, "_mlroomfail".to_string(), msg.clone());
             let mut s = shared.write().unwrap();
             s.status = RoomStatus::Error;
             s.error_message = msg;
@@ -1041,6 +1140,82 @@ fn room_thread(
                         &emit_log,
                     );
                 }
+                RoomCommand::PlayerJoin {
+                    player_index,
+                    name,
+                    reason,
+                } => {
+                    let should_dispatch = {
+                        let mut s = shared.write().unwrap();
+                        let existed = s.players.contains_key(&player_index);
+                        let player = s
+                            .players
+                            .entry(player_index)
+                            .or_insert_with(|| Player::new(player_index, name));
+                        let was_connected = player.is_connected;
+                        player.is_connected = true;
+                        s.out_queues
+                            .entry(player_index)
+                            .or_insert_with(|| VecDeque::with_capacity(MAX_BUFFER));
+                        !existed || !was_connected
+                    };
+                    if should_dispatch {
+                        let data = serde_json::json!({"reason": reason}).to_string();
+                        dispatch_lua_event(
+                            &lua,
+                            &event_handlers,
+                            "_playerjoin",
+                            &data,
+                            player_index,
+                            &emit_log,
+                        );
+                    }
+                }
+                RoomCommand::PlayerLeave {
+                    player_index,
+                    reason,
+                } => {
+                    let exists = {
+                        let mut s = shared.write().unwrap();
+                        if let Some(player) = s.players.get_mut(&player_index) {
+                            player.is_connected = false;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if exists {
+                        let data = serde_json::json!({"reason": reason}).to_string();
+                        dispatch_lua_event(
+                            &lua,
+                            &event_handlers,
+                            "_playerleave",
+                            &data,
+                            player_index,
+                            &emit_log,
+                        );
+                    }
+                }
+                RoomCommand::PlayerExit {
+                    player_index,
+                    reason,
+                } => {
+                    let exists = shared.read().unwrap().players.contains_key(&player_index);
+                    if exists {
+                        let data = serde_json::json!({"reason": reason}).to_string();
+                        dispatch_lua_event(
+                            &lua,
+                            &event_handlers,
+                            "_playerexit",
+                            &data,
+                            player_index,
+                            &emit_log,
+                        );
+                        let mut s = shared.write().unwrap();
+                        s.players.remove(&player_index);
+                        s.out_queues.remove(&player_index);
+                    }
+                }
                 RoomCommand::TimerCallback { func_key } => {
                     if let Ok(func) = lua.registry_value::<LuaFunction>(&func_key) {
                         if let Err(e) = func.call::<()>(()) {
@@ -1062,14 +1237,7 @@ fn room_thread(
                 }
                 RoomCommand::Stop { reason } => {
                     let data = serde_json::json!({"reason": reason}).to_string();
-                    dispatch_lua_event(
-                        &lua,
-                        &event_handlers,
-                        "_roomover",
-                        &data,
-                        -1,
-                        &emit_log,
-                    );
+                    dispatch_lua_event(&lua, &event_handlers, "_roomover", &data, -1, &emit_log);
                     break;
                 }
                 RoomCommand::Destroy => {
@@ -1088,7 +1256,11 @@ fn room_thread(
     // Save archives
     {
         let s = shared.read().unwrap();
-        if let Err(e) = crate::storage::save_room_archives(&archive_dir, &s.script_dir.to_string_lossy(), &s.players) {
+        if let Err(e) = crate::storage::save_room_archives(
+            &archive_dir,
+            &s.script_dir.to_string_lossy(),
+            &s.players,
+        ) {
             emit_log("ERR", "System", format!("Archive save failed: {}", e));
         }
     }
@@ -1148,7 +1320,9 @@ fn dispatch_lua_event<F>(
         };
 
         if let Some(func) = func_result {
-            if let Err(e) = func.call::<()>((id, ename.to_string(), evalue.to_string(), player_index)) {
+            if let Err(e) =
+                func.call::<()>((id, ename.to_string(), evalue.to_string(), player_index))
+            {
                 emit_log(
                     "ERR",
                     "Event",
@@ -1156,5 +1330,34 @@ fn dispatch_lua_event<F>(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_user_event_accepts_documented_boundaries() {
+        assert_eq!(validate_user_event("A123:boss", ""), ERR_OK);
+        assert_eq!(
+            validate_user_event(&"a".repeat(32), &"b".repeat(900)),
+            ERR_OK
+        );
+    }
+
+    #[test]
+    fn validate_user_event_rejects_invalid_key_and_value() {
+        assert_eq!(validate_user_event("", ""), ERR_EVENT_KEY_LEN);
+        assert_eq!(validate_user_event(&"a".repeat(33), ""), ERR_EVENT_KEY_LEN);
+        assert_eq!(
+            validate_user_event("_roomloaded", ""),
+            ERR_EVENT_KEY_INVALID
+        );
+        assert_eq!(validate_user_event("bad-key", ""), ERR_EVENT_KEY_INVALID);
+        assert_eq!(
+            validate_user_event("ok", &"v".repeat(901)),
+            ERR_EVENT_VALUE_LEN
+        );
     }
 }
