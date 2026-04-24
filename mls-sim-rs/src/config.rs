@@ -1,6 +1,9 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+use crate::player::Player;
 
 #[derive(Parser, Debug)]
 #[command(name = "mls-sim", version, about = "MLS 云脚本本地模拟环境")]
@@ -137,4 +140,54 @@ impl AppConfig {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(path, json)
     }
+}
+
+pub fn build_players_from_config(configs: &[PlayerConfig]) -> HashMap<i32, Player> {
+    let configs = if configs.is_empty() {
+        vec![PlayerConfig {
+            index: 0,
+            name: "Player_0".into(),
+            items: Default::default(),
+            map_level: None,
+            map_exp: None,
+            played_count: None,
+            script_archive: None,
+            common_archive: None,
+            read_archive: None,
+            cfg_archive: None,
+        }]
+    } else {
+        configs.to_vec()
+    };
+
+    let mut players = HashMap::new();
+    for pc in &configs {
+        let mut p = Player::new(pc.index, pc.name.clone());
+        if !pc.items.is_empty() {
+            p.items = pc.items.clone();
+        }
+        if let Some(v) = pc.map_level {
+            p.map_level = v;
+        }
+        if let Some(v) = pc.map_exp {
+            p.map_exp = v;
+        }
+        if let Some(v) = pc.played_count {
+            p.played_count = v;
+        }
+        if let Some(ref v) = pc.script_archive {
+            p.script_archive = Some(v.clone());
+        }
+        if let Some(ref v) = pc.common_archive {
+            p.common_archive = v.clone();
+        }
+        if let Some(ref v) = pc.read_archive {
+            p.read_archive = v.clone();
+        }
+        if let Some(ref v) = pc.cfg_archive {
+            p.cfg_archive = v.clone();
+        }
+        players.insert(pc.index, p);
+    }
+    players
 }

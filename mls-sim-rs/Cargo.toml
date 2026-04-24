@@ -1,20 +1,16 @@
 [package]
 name = "mls-sim"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws", "json"] }
+eframe = "0.29"
+axum = { version = "0.8", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors"] }
 mlua = { version = "0.10", features = ["lua53", "vendored", "send", "serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rust-embed = { version = "8", features = ["compression"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
-mime_guess = "2"
-open = "5"
-futures-util = "0.3"
