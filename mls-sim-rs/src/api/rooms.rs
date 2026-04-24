@@ -88,8 +88,9 @@ pub async fn create_room(
         )));
     }
 
-    let players = build_players(&req.players);
+    let mut players = build_players(&req.players);
     let archive_dir = state.config.read().unwrap().archive_dir.clone();
+    crate::storage::apply_saved_archives(&archive_dir, &req.script_dir, &mut players);
     let mut manager = state.manager.write().unwrap();
     let room_id = manager.create_room(script_dir, req.mode_id, players, archive_dir);
 

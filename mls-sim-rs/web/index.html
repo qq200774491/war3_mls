@@ -3,28 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MLS Simulator</title>
+    <title>MLS 云脚本模拟器</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <header>
-        <h1>MLS Simulator</h1>
-        <span class="subtitle">Rust Edition</span>
-        <span class="ws-status disconnected" id="ws-status">Disconnected</span>
+        <h1>MLS 云脚本模拟器</h1>
+        <span class="subtitle">本地多开测试环境</span>
+        <span class="ws-status disconnected" id="ws-status">未连接</span>
     </header>
 
     <div class="container">
         <aside class="sidebar">
             <div class="panel-header">
-                <h2>Rooms</h2>
-                <button class="btn btn-primary" onclick="showCreateRoom()">+ New</button>
+                <h2>房间列表</h2>
+                <button class="btn btn-primary" onclick="showCreateRoom()">+ 新建</button>
             </div>
             <div id="room-list"></div>
         </aside>
 
         <main class="main-content" id="main-content">
             <div class="placeholder" id="no-room-selected">
-                <p>Select or create a room to begin</p>
+                <p>选择或创建一个房间开始测试</p>
             </div>
 
             <div id="room-detail" style="display:none">
@@ -35,65 +35,65 @@
                         <span class="info-text" id="room-info"></span>
                     </div>
                     <div class="room-actions">
-                        <button class="btn btn-success" onclick="startRoom()">Start</button>
-                        <button class="btn btn-warning" onclick="stopRoom()">Stop</button>
-                        <button class="btn btn-danger" onclick="destroyRoom()">Destroy</button>
+                        <button class="btn btn-success" onclick="startRoom()">启动</button>
+                        <button class="btn btn-warning" onclick="stopRoom()">停止</button>
+                        <button class="btn btn-danger" onclick="destroyRoom()">销毁</button>
                     </div>
                 </div>
 
                 <div class="section">
                     <div class="panel-header">
-                        <h3>Players</h3>
+                        <h3>玩家列表</h3>
                     </div>
                     <div id="player-list" class="player-grid"></div>
                 </div>
 
                 <div class="two-col">
                     <div class="section">
-                        <h3>Send Event</h3>
+                        <h3>发送事件</h3>
                         <div class="form-group">
-                            <label>Event Name</label>
-                            <input type="text" id="event-name" placeholder="e.g. buy_tower">
+                            <label>事件名称</label>
+                            <input type="text" id="event-name" placeholder="例如 buy_tower">
                         </div>
                         <div class="form-group">
-                            <label>Event Data</label>
-                            <textarea id="event-data" rows="2" placeholder='e.g. {"action":"buy"}'></textarea>
+                            <label>事件数据</label>
+                            <textarea id="event-data" rows="2" placeholder='例如 {"action":"buy"}'></textarea>
                         </div>
                         <div class="form-group">
-                            <label>Player Index</label>
+                            <label>目标玩家</label>
                             <select id="event-player"></select>
                         </div>
-                        <button class="btn btn-primary" onclick="sendEvent()">Send</button>
+                        <button class="btn btn-primary" onclick="sendEvent()">发送</button>
 
                         <div class="presets" id="event-presets">
-                            <span class="label">Presets:</span>
+                            <span class="label">快捷预设:</span>
                         </div>
                     </div>
 
                     <div class="section">
-                        <h3>State Inspector</h3>
+                        <h3>状态查看</h3>
                         <div id="state-inspector" class="state-box">
-                            <pre id="state-json">Click "Refresh" to view state</pre>
+                            <pre id="state-json">点击"刷新"查看房间状态</pre>
                         </div>
-                        <button class="btn" onclick="refreshState()">Refresh</button>
+                        <button class="btn" onclick="refreshState()">刷新</button>
                     </div>
                 </div>
 
                 <div class="section">
                     <div class="tab-bar">
-                        <button class="tab active" onclick="switchTab(this, 'log-panel')">Logs</button>
-                        <button class="tab" onclick="switchTab(this, 'event-panel')">Out Events</button>
+                        <button class="tab active" onclick="switchTab(this, 'log-panel')">日志</button>
+                        <button class="tab" onclick="switchTab(this, 'event-panel')">出站事件</button>
                     </div>
                     <div class="log-controls">
                         <select id="log-level-filter" onchange="filterLogs()">
-                            <option value="all">All Levels</option>
-                            <option value="DBG">DBG</option>
-                            <option value="INF">INF</option>
-                            <option value="ERR">ERR</option>
+                            <option value="all">全部级别</option>
+                            <option value="DBG">调试</option>
+                            <option value="INF">信息</option>
+                            <option value="ERR">错误</option>
                         </select>
-                        <input type="text" id="log-search" placeholder="Filter..." oninput="filterLogs()">
-                        <label><input type="checkbox" id="log-autoscroll" checked> Auto-scroll</label>
-                        <button class="btn btn-small" onclick="clearLogs()">Clear</button>
+                        <input type="text" id="log-search" placeholder="搜索过滤..." oninput="filterLogs()">
+                        <label><input type="checkbox" id="log-autoscroll" checked> 自动滚动</label>
+                        <button class="btn btn-small" onclick="clearLogs()">清空</button>
                     </div>
                     <div id="log-panel" class="log-viewer"></div>
                     <div id="event-panel" class="log-viewer" style="display:none"></div>
@@ -104,28 +104,28 @@
 
     <div class="modal-overlay" id="create-modal" style="display:none">
         <div class="modal">
-            <h2>Create Room</h2>
+            <h2>创建房间</h2>
             <div class="form-group">
-                <label>Script Directory</label>
+                <label>云脚本目录</label>
                 <input type="text" id="new-script-dir" placeholder="D:/path/to/script">
             </div>
             <div class="form-group">
-                <label>Mode ID</label>
+                <label>模式 ID</label>
                 <input type="number" id="new-mode-id" value="0">
             </div>
             <div class="form-group">
-                <label>Players (JSON array)</label>
+                <label>玩家配置 (JSON 数组)</label>
                 <textarea id="new-players" rows="6">[
   {"index": 0, "name": "Alice", "items": {"VIP001": 1}},
   {"index": 1, "name": "Bob"}
 ]</textarea>
             </div>
             <div class="form-group">
-                <label><input type="checkbox" id="new-auto-start" checked> Auto Start</label>
+                <label><input type="checkbox" id="new-auto-start" checked> 自动启动</label>
             </div>
             <div class="modal-actions">
-                <button class="btn" onclick="hideCreateRoom()">Cancel</button>
-                <button class="btn btn-primary" onclick="createRoom()">Create</button>
+                <button class="btn" onclick="hideCreateRoom()">取消</button>
+                <button class="btn btn-primary" onclick="createRoom()">创建</button>
             </div>
         </div>
     </div>

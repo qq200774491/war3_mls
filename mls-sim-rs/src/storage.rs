@@ -66,6 +66,83 @@ pub fn load_player_archives(base: &str, script_name: &str) -> Value {
     }
 }
 
+pub fn apply_saved_archives(
+    base: &str,
+    script_dir: &str,
+    players: &mut HashMap<i32, crate::player::Player>,
+) {
+    let name = Path::new(script_dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let path = archive_dir(base).join(format!("{}.json", name));
+    if !path.exists() {
+        return;
+    }
+    let data: serde_json::Map<String, Value> = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => return,
+    };
+
+    for (idx, player) in players.iter_mut() {
+        let key = idx.to_string();
+        if let Some(saved) = data.get(&key) {
+            if let Some(v) = saved.get("script_archive").and_then(|v| v.as_str()) {
+                if player.script_archive.is_none() {
+                    player.script_archive = Some(v.to_string());
+                }
+            }
+            if let Some(obj) = saved.get("common_archive").and_then(|v| v.as_object()) {
+                if player.common_archive.is_empty() {
+                    player.common_archive = obj
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect();
+                }
+            }
+            if let Some(obj) = saved.get("read_archive").and_then(|v| v.as_object()) {
+                if player.read_archive.is_empty() {
+                    player.read_archive = obj
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect();
+                }
+            }
+            if let Some(obj) = saved.get("cfg_archive").and_then(|v| v.as_object()) {
+                if player.cfg_archive.is_empty() {
+                    player.cfg_archive = obj
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect();
+                }
+            }
+            if let Some(obj) = saved.get("items").and_then(|v| v.as_object()) {
+                if player.items.is_empty() {
+                    player.items = obj
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0) as i32))
+                        .collect();
+                }
+            }
+            if let Some(v) = saved.get("map_level").and_then(|v| v.as_i64()) {
+                if player.map_level == 1 {
+                    player.map_level = v as i32;
+                }
+            }
+            if let Some(v) = saved.get("map_exp").and_then(|v| v.as_i64()) {
+                if player.map_exp == 0 {
+                    player.map_exp = v as i32;
+                }
+            }
+            if let Some(v) = saved.get("played_count").and_then(|v| v.as_i64()) {
+                if player.played_count == 1 {
+                    player.played_count = v as i32;
+                }
+            }
+        }
+    }
+}
+
 pub fn list_archives(base: &str) -> Vec<Value> {
     let dir = archive_dir(base);
     let mut result = Vec::new();

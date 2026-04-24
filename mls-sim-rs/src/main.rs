@@ -42,9 +42,10 @@ async fn main() {
     if let Some(ref room_cfg) = auto_room {
         let script_dir = PathBuf::from(&room_cfg.script_dir);
         if script_dir.is_dir() {
-            let players =
+            let mut players =
                 api::rooms::build_players_from_config(&room_cfg.players);
             let archive_dir = state.config.read().unwrap().archive_dir.clone();
+            storage::apply_saved_archives(&archive_dir, &room_cfg.script_dir, &mut players);
             let mut manager = state.manager.write().unwrap();
             let room_id =
                 manager.create_room(script_dir.clone(), room_cfg.mode_id, players, archive_dir);
@@ -66,7 +67,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
     println!();
-    println!("  MLS Simulator (Rust) v{}", env!("CARGO_PKG_VERSION"));
+    println!("  MLS Simulator(小为) v{}", env!("CARGO_PKG_VERSION"));
     println!("  Running at http://{}", addr);
     println!();
 

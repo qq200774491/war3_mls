@@ -1,4 +1,4 @@
-// MLS Simulator Frontend (Native WebSocket)
+// MLS 云脚本模拟器前端
 
 const API = '';
 let ws = null;
@@ -45,10 +45,10 @@ function initWebSocket() {
 function updateWsStatus(connected) {
     const el = document.getElementById('ws-status');
     if (connected) {
-        el.textContent = 'Connected';
+        el.textContent = '已连接';
         el.className = 'ws-status connected';
     } else {
-        el.textContent = 'Disconnected';
+        el.textContent = '未连接';
         el.className = 'ws-status disconnected';
     }
 }
@@ -62,7 +62,7 @@ function joinRoom(roomId) {
     }
 }
 
-// ---- API Helpers ----
+// ---- API ----
 
 async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -71,7 +71,14 @@ async function api(method, path, body) {
     return res.json();
 }
 
-// ---- Room List ----
+// ---- 房间列表 ----
+
+const STATUS_MAP = {
+    'running': '运行中',
+    'stopped': '已停止',
+    'created': '已创建',
+    'error': '异常',
+};
 
 async function refreshRoomList() {
     const rooms = await api('GET', '/api/rooms');
@@ -81,20 +88,20 @@ async function refreshRoomList() {
         const div = document.createElement('div');
         div.className = 'room-item' + (r.id === currentRoomId ? ' active' : '');
         div.onclick = () => selectRoom(r.id);
+        const statusText = STATUS_MAP[r.status] || r.status;
         div.innerHTML = `
             <div class="room-name">${r.id}</div>
-            <div class="room-meta">${r.player_count}P | ${r.status} | Mode ${r.mode_id}</div>
+            <div class="room-meta">${r.player_count}人 | ${statusText} | 模式 ${r.mode_id}</div>
         `;
         list.appendChild(div);
     });
 
-    // Auto-select first room if none selected
     if (!currentRoomId && rooms.length > 0) {
         selectRoom(rooms[0].id);
     }
 }
 
-// ---- Select Room ----
+// ---- 选择房间 ----
 
 async function selectRoom(roomId) {
     currentRoomId = roomId;
@@ -117,17 +124,18 @@ async function refreshRoomDetail() {
 
     document.getElementById('room-title').textContent = room.id;
     const badge = document.getElementById('room-status');
-    badge.textContent = room.status;
+    const statusText = STATUS_MAP[room.status] || room.status;
+    badge.textContent = statusText;
     badge.className = 'badge ' + room.status;
 
-    const info = `Script: ${room.script_dir} | GameTime: ${room.game_time}s`;
+    const info = `脚本: ${room.script_dir} | 游戏时间: ${room.game_time}秒`;
     document.getElementById('room-info').textContent = info;
 
     renderPlayers(room.players);
     updatePlayerSelect(room.players);
 }
 
-// ---- Players ----
+// ---- 玩家 ----
 
 function renderPlayers(players) {
     const container = document.getElementById('player-list');
@@ -136,17 +144,17 @@ function renderPlayers(players) {
         const card = document.createElement('div');
         card.className = 'player-card';
         const statusClass = p.is_connected ? 'player-status' : 'player-status offline';
-        const statusText = p.is_connected ? 'Online' : 'Offline';
+        const statusText = p.is_connected ? '在线' : '离线';
         card.innerHTML = `
             <div class="player-name">[${p.index}] ${p.name}</div>
             <div class="${statusClass}">${statusText}</div>
             <div style="color:#666;font-size:11px;margin-top:2px">
-                Lv.${p.map_level} | Items: ${Object.keys(p.items).length}
+                等级 ${p.map_level} | 道具 ${Object.keys(p.items).length} 种
             </div>
             <div class="player-actions">
-                <button class="btn btn-small" onclick="simLeave(${p.index})">Leave</button>
-                <button class="btn btn-small" onclick="simJoin(${p.index})">Join</button>
-                <button class="btn btn-small btn-danger" onclick="simExit(${p.index})">Exit</button>
+                <button class="btn btn-small" onclick="simLeave(${p.index})">断线</button>
+                <button class="btn btn-small" onclick="simJoin(${p.index})">重连</button>
+                <button class="btn btn-small btn-danger" onclick="simExit(${p.index})">退出</button>
             </div>
         `;
         container.appendChild(card);
@@ -164,11 +172,11 @@ function updatePlayerSelect(players) {
     }
     const optRoom = document.createElement('option');
     optRoom.value = -1;
-    optRoom.textContent = '[-1] Room Event';
+    optRoom.textContent = '[-1] 房间事件';
     sel.appendChild(optRoom);
 }
 
-// ---- Player Simulation ----
+// ---- 玩家模拟 ----
 
 async function simLeave(idx) {
     await api('POST', `/api/rooms/${currentRoomId}/players/${idx}/leave`);
@@ -185,7 +193,7 @@ async function simExit(idx) {
     setTimeout(refreshRoomDetail, 300);
 }
 
-// ---- Room Actions ----
+// ---- 房间操作 ----
 
 async function startRoom() {
     await api('POST', `/api/rooms/${currentRoomId}/start`);
@@ -200,7 +208,7 @@ async function stopRoom() {
 }
 
 async function destroyRoom() {
-    if (!confirm('Destroy this room?')) return;
+    if (!confirm('确定要销毁这个房间吗？')) return;
     await api('DELETE', `/api/rooms/${currentRoomId}`);
     currentRoomId = null;
     document.getElementById('room-detail').style.display = 'none';
@@ -208,7 +216,7 @@ async function destroyRoom() {
     refreshRoomList();
 }
 
-// ---- Create Room ----
+// ---- 创建房间 ----
 
 function showCreateRoom() {
     document.getElementById('create-modal').style.display = 'flex';
@@ -227,7 +235,7 @@ async function createRoom() {
     try {
         players = JSON.parse(document.getElementById('new-players').value);
     } catch (e) {
-        alert('Players JSON parse error: ' + e.message);
+        alert('玩家配置 JSON 解析失败: ' + e.message);
         return;
     }
 
@@ -239,7 +247,7 @@ async function createRoom() {
     });
 
     if (result.error) {
-        alert('Error: ' + result.error);
+        alert('创建失败: ' + result.error);
         return;
     }
 
@@ -248,14 +256,14 @@ async function createRoom() {
     selectRoom(result.id);
 }
 
-// ---- Send Event ----
+// ---- 发送事件 ----
 
 async function sendEvent() {
     const ename = document.getElementById('event-name').value.trim();
     const evalue = document.getElementById('event-data').value;
     const playerIndex = parseInt(document.getElementById('event-player').value);
 
-    if (!ename) { alert('Event name is required'); return; }
+    if (!ename) { alert('请输入事件名称'); return; }
 
     await api('POST', `/api/rooms/${currentRoomId}/events`, {
         ename, evalue, player_index: playerIndex
@@ -274,7 +282,7 @@ function addPreset(name, data) {
     container.appendChild(btn);
 }
 
-// ---- State Inspector ----
+// ---- 状态查看 ----
 
 async function refreshState() {
     if (!currentRoomId) return;
@@ -282,7 +290,7 @@ async function refreshState() {
     document.getElementById('state-json').textContent = JSON.stringify(state, null, 2);
 }
 
-// ---- Logs ----
+// ---- 日志 ----
 
 function appendLog(entry) {
     logEntries.push(entry);
@@ -314,7 +322,7 @@ function appendOutEvent(ev) {
     const div = document.createElement('div');
     div.className = 'log-line event';
     const ts = new Date(ev.timestamp * 1000).toLocaleTimeString();
-    const target = ev.player_index === -1 ? 'ALL' : `P${ev.player_index}`;
+    const target = ev.player_index === -1 ? '全体' : `P${ev.player_index}`;
     div.textContent = `[${ts}] -> ${target} | ${ev.ename}: ${ev.evalue}`;
     panel.appendChild(div);
 
@@ -348,7 +356,7 @@ function clearLogs() {
     eventEntries = [];
 }
 
-// ---- Tabs ----
+// ---- 标签页 ----
 
 function switchTab(btn, panelId) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -357,7 +365,7 @@ function switchTab(btn, panelId) {
     document.getElementById('event-panel').style.display = panelId === 'event-panel' ? '' : 'none';
 }
 
-// ---- Init ----
+// ---- 初始化 ----
 
 document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
