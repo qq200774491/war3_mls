@@ -82,6 +82,7 @@ def main() -> int:
     parser.add_argument("--player-index", type=int, default=0, help="玩家槽位")
     parser.add_argument("--player-name", default="本地测试玩家", help="登录到房间时使用的玩家名")
     parser.add_argument("--platform-id", default="10001", help="player_info 里的平台 UID，不能是 0")
+    parser.add_argument("--login-wait", type=float, default=0.1, help="login 后等待房间处理玩家加入的秒数")
     parser.add_argument("--skip-player-info", action="store_true", help="跳过 player_info 注册")
     parser.add_argument("--label", default="测试消息", help="client 后面的消息名")
     parser.add_argument("--data", default="", help="回调 data；默认按字符串发送")
@@ -110,6 +111,7 @@ def main() -> int:
         if not login_result.get("ok"):
             raise RuntimeError(f"登录失败：{login_result}")
         print(f"玩家登录成功：index={args.player_index}, name={args.player_name}")
+        time.sleep(args.login_wait)
 
         if not args.skip_player_info:
             player_info_payload = {
