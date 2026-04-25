@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.6 (2026-04-25)
+
+### 新功能
+- 新增本地调试控制接口 `/api/debug/*`（由 Syh1906 贡献，PR #2）
+  - `GET /api/debug/rooms/{room_id}/logs` — 查看房间日志
+  - `POST /api/debug/rooms/{room_id}/logs/clear` — 清除房间日志
+  - `POST /api/debug/rooms/{room_id}/restart` — 重启房间
+  - `POST /api/debug/restart` — 服务重启（预留）
+- 提取 `build_bridge_router()` 为可复用的路由构建函数
+- 新增 `lib.rs` 库入口，支持集成测试
+- 新增 debug API 集成测试 (`tests/debug_api.rs`)
+
 ## v0.4.5 (2026-04-25)
 
 ### 修复
