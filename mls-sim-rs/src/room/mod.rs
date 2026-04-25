@@ -526,7 +526,7 @@ fn room_thread(
     lua.set_memory_limit(10 * 1024 * 1024).ok();
 
     // Install JSON library
-    if let Err(e) = lua.load(json_lua::JSON_LUA).exec() {
+    if let Err(e) = json_lua::install_json_lib(&lua) {
         emit_log("ERR", "System", format!("JSON lib load failed: {}", e));
         shared.write().unwrap().status = RoomStatus::Error;
         shared.write().unwrap().error_message = e.to_string();

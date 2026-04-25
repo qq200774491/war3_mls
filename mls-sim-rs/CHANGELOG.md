@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.4 (2026-04-25)
+
+### 改进
+- 重写 json.encode / json.decode：从 Lua 手写实现替换为 Rust (serde_json) 实现，对齐 cjson 标准
+  - 空 Lua 表 `{}` 序列化为 JSON object `{}`（与 KK 对战平台一致），不再错误地序列化为 `[]`
+  - JSON 合规性由 serde_json 保证（Unicode 转义、数字精度、嵌套结构等）
+  - 非 UTF-8 Lua 字符串安全降级处理
+
 ## v0.4.3 (2026-04-25)
 
 ### 新功能
