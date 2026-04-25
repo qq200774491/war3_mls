@@ -1,9 +1,0 @@
-# Rust build output
-mls-sim-rs/target/
-
-# Local runtime data
-mls-sim-rs/archives/
-
-# Local agent/tool state
-.local/
-.serena/
