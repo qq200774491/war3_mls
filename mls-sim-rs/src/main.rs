@@ -1,14 +1,8 @@
-mod bridge;
-mod config;
-mod gui;
-mod player;
-mod room;
-mod storage;
-
 use clap::Parser;
-use config::{AppConfig, Cli};
 use eframe::egui;
-use room::RoomManager;
+use mls_sim::config::{AppConfig, Cli};
+use mls_sim::room::RoomManager;
+use mls_sim::{bridge, config, gui, storage};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 

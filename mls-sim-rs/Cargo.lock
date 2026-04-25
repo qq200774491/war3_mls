@@ -2175,16 +2175,18 @@ dependencies = [
 
 [[package]]
 name = "mls-sim"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "axum",
  "chrono",
  "clap",
  "eframe",
+ "http-body-util",
  "mlua",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.59.0",

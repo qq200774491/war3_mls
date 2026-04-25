@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -19,16 +19,7 @@ pub async fn run_bridge_server(
     manager: Arc<RwLock<RoomManager>>,
     config: Arc<RwLock<AppConfig>>,
 ) {
-    let state = BridgeState { manager, config };
-
-    let app = Router::new()
-        .route("/api/bridge/login", post(login))
-        .route("/api/bridge/event", post(event))
-        .route("/api/bridge/poll/{room_id}/{player_index}", get(poll))
-        .route("/api/bridge/rooms", get(list_rooms))
-        .route("/api/bridge/config", post(bridge_config))
-        .route("/api/health", get(health))
-        .with_state(state);
+    let app = build_bridge_router(manager, config);
 
     let addr = format!("{}:{}", host, port);
     let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -40,6 +31,29 @@ pub async fn run_bridge_server(
     };
     tracing::info!("Bridge server listening on {}", addr);
     let _ = axum::serve(listener, app).await;
+}
+
+pub fn build_bridge_router(
+    manager: Arc<RwLock<RoomManager>>,
+    config: Arc<RwLock<AppConfig>>,
+) -> Router {
+    let state = BridgeState { manager, config };
+
+    Router::new()
+        .route("/api/bridge/login", post(login))
+        .route("/api/bridge/event", post(event))
+        .route("/api/bridge/poll/{room_id}/{player_index}", get(poll))
+        .route("/api/bridge/rooms", get(list_rooms))
+        .route("/api/bridge/config", post(bridge_config))
+        .route("/api/debug/rooms/{room_id}/logs", get(debug_logs))
+        .route(
+            "/api/debug/rooms/{room_id}/logs/clear",
+            post(clear_debug_logs),
+        )
+        .route("/api/debug/rooms/{room_id}/restart", post(restart_room))
+        .route("/api/debug/service/restart", post(restart_service))
+        .route("/api/health", get(health))
+        .with_state(state)
 }
 
 #[derive(serde::Deserialize)]
@@ -224,6 +238,161 @@ async fn bridge_config(
         "poll_interval": req.poll_interval,
         "content": content,
     }))
+}
+
+#[derive(serde::Deserialize)]
+struct DebugLogQuery {
+    limit: Option<usize>,
+    level: Option<String>,
+    q: Option<String>,
+    since: Option<f64>,
+}
+
+async fn debug_logs(
+    State(state): State<BridgeState>,
+    Path(room_id): Path<String>,
+    Query(query): Query<DebugLogQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let manager = state.manager.read().unwrap();
+    let room = match manager.get_room(&room_id) {
+        Some(room) => room,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "errnu": ERR_ROOM_NOT_EXIST,
+                    "error": format!("Room not found: {}", room_id),
+                })),
+            );
+        }
+    };
+
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let level = query.level.as_deref().filter(|v| !v.is_empty());
+    let keyword = query.q.as_deref().filter(|v| !v.is_empty());
+    let shared = room.shared.read().unwrap();
+    let mut logs: Vec<_> = shared
+        .log_buffer
+        .iter()
+        .filter(|entry| level.map_or(true, |level| entry.level == level))
+        .filter(|entry| query.since.map_or(true, |since| entry.timestamp >= since))
+        .filter(|entry| {
+            keyword.map_or(true, |keyword| {
+                entry.message.contains(keyword) || entry.source.contains(keyword)
+            })
+        })
+        .cloned()
+        .collect();
+    let total = logs.len();
+    if logs.len() > limit {
+        logs = logs.split_off(total - limit);
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "errnu": ERR_OK,
+            "room_id": room_id,
+            "limit": limit,
+            "count": logs.len(),
+            "total": total,
+            "logs": logs,
+        })),
+    )
+}
+
+async fn clear_debug_logs(
+    State(state): State<BridgeState>,
+    Path(room_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let manager = state.manager.read().unwrap();
+    let room = match manager.get_room(&room_id) {
+        Some(room) => room,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "errnu": ERR_ROOM_NOT_EXIST,
+                    "error": format!("Room not found: {}", room_id),
+                })),
+            );
+        }
+    };
+
+    let cleared = {
+        let mut shared = room.shared.write().unwrap();
+        let cleared = shared.log_buffer.len();
+        shared.log_buffer.clear();
+        cleared
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "errnu": ERR_OK,
+            "room_id": room_id,
+            "cleared": cleared,
+        })),
+    )
+}
+
+#[derive(serde::Deserialize)]
+struct RestartRoomRequest {
+    #[serde(default)]
+    reason: String,
+}
+
+async fn restart_room(
+    State(state): State<BridgeState>,
+    Path(room_id): Path<String>,
+    body: Option<Json<RestartRoomRequest>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let reason = body
+        .map(|Json(req)| req.reason)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or_else(|| "Debug API restart".to_string());
+    let archive_dir = state.config.read().unwrap().archive_dir.clone();
+    let new_room_id = state
+        .manager
+        .write()
+        .unwrap()
+        .restart_room(&room_id, archive_dir, reason);
+
+    match new_room_id {
+        Some(new_room_id) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "errnu": ERR_OK,
+                "old_room_id": room_id,
+                "room_id": new_room_id,
+                "status": "restarted",
+            })),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "errnu": ERR_ROOM_NOT_EXIST,
+                "error": format!("Room not found: {}", room_id),
+            })),
+        ),
+    }
+}
+
+async fn restart_service() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "ok": false,
+            "errnu": crate::room::ERR_UNKNOWN,
+            "error": "Service restart is not supported by the simulator HTTP API; restart the process with an external tool.",
+        })),
+    )
 }
 
 async fn health(State(state): State<BridgeState>) -> Json<serde_json::Value> {

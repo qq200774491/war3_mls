@@ -380,6 +380,25 @@ impl RoomManager {
         }
     }
 
+    pub fn restart_room(
+        &mut self,
+        id: &str,
+        archive_dir: String,
+        reason: String,
+    ) -> Option<String> {
+        let room = self.rooms.remove(id)?;
+        let (script_dir, mode_id, players) = {
+            let shared = room.shared.read().unwrap();
+            (
+                shared.script_dir.clone(),
+                shared.mode_id,
+                shared.players.clone(),
+            )
+        };
+        room.stop(reason);
+        Some(self.create_room(script_dir, mode_id, players, archive_dir))
+    }
+
     pub fn shutdown_all(&mut self) {
         for room in self.rooms.values() {
             let _ = room.command_tx.send(RoomCommand::Stop {
