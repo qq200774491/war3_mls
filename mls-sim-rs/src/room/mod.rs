@@ -1281,13 +1281,33 @@ fn lua_value_to_string(v: &LuaValue) -> String {
         LuaValue::String(s) => match s.to_str() {
             Ok(valid) => valid.to_string(),
             Err(_) => {
-                let bytes = s.as_bytes();
+                let bytes: &[u8] = &s.as_bytes();
                 let mut out = String::with_capacity(bytes.len());
-                for b in bytes.iter() {
-                    if b.is_ascii_graphic() || *b == b' ' {
-                        out.push(*b as char);
+                let mut i = 0;
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    if b < 0x80 {
+                        out.push(b as char);
+                        i += 1;
                     } else {
+                        let seq_len = if b >= 0xF0 {
+                            4
+                        } else if b >= 0xE0 {
+                            3
+                        } else if b >= 0xC0 {
+                            2
+                        } else {
+                            0
+                        };
+                        if seq_len >= 2 && i + seq_len <= bytes.len() {
+                            if let Ok(ch) = std::str::from_utf8(&bytes[i..i + seq_len]) {
+                                out.push_str(ch);
+                                i += seq_len;
+                                continue;
+                            }
+                        }
                         out.push_str(&format!("\\x{:02x}", b));
+                        i += 1;
                     }
                 }
                 out
