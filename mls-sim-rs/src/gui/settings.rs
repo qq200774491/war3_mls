@@ -112,6 +112,12 @@ impl GuiApp {
                     ));
                     ui.label("本地 Lua 云脚本测试环境");
                     ui.add_space(4.0);
+                    ui.label(format!("参与者: {}", env!("CARGO_PKG_AUTHORS")));
+                    ui.hyperlink_to(
+                        "GitHub 仓库",
+                        env!("CARGO_PKG_REPOSITORY"),
+                    );
+                    ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(format!(
                             "Bridge API: http://{}:{}/api/bridge/",
