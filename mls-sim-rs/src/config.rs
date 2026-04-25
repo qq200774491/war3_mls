@@ -19,6 +19,9 @@ pub struct Cli {
 
     #[arg(long, default_value = "config.json")]
     pub config: String,
+
+    #[arg(long, help = "Hide the console window (Windows only)")]
+    pub console_notwrte: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

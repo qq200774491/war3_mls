@@ -35,6 +35,14 @@ fn main() {
         .init();
 
     let cli = Cli::parse();
+
+    #[cfg(windows)]
+    if cli.console_notwrte {
+        unsafe {
+            windows_sys::Win32::System::Console::FreeConsole();
+        }
+    }
+
     let config_path = cli.config.clone();
     let config = AppConfig::load(&cli);
 
