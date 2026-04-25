@@ -2,6 +2,8 @@
 name = "mls-sim"
 version = "0.4.6"
 edition = "2021"
+authors = ["花吃了阿九", "xiaowei <1053122090@qq.com>"]
+repository = "https://github.com/qq200774491/war3_mls"
 
 [dependencies]
 eframe = "0.29"
