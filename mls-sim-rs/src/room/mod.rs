@@ -1,4 +1,5 @@
 pub mod json_lua;
+mod profiler;
 
 use crate::player::Player;
 use mlua::prelude::*;
@@ -78,6 +79,24 @@ pub struct OutEvent {
     pub room_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ProfileNode {
+    pub id: String,
+    pub name: String,
+    pub count: u64,
+    pub self_count: u64,
+    pub children: Vec<ProfileNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ProfileData {
+    pub root: ProfileNode,
+    pub total_samples: u64,
+    pub window: u64,
+    pub bucket_count: u64,
+    pub running: bool,
+}
+
 pub enum RoomCommand {
     DispatchEvent {
         ename: String,
@@ -107,6 +126,12 @@ pub enum RoomCommand {
         reason: String,
     },
     Destroy,
+    ProfilerStart {
+        hook_count: i32,
+        window_seconds: i32,
+    },
+    ProfilerStop,
+    ProfilerReset,
 }
 
 pub fn validate_user_event(ename: &str, evalue: &str) -> i32 {
@@ -138,6 +163,9 @@ pub struct RoomSharedState {
     pub out_queues: HashMap<i32, VecDeque<OutEvent>>,
     pub log_buffer: VecDeque<LogEntry>,
     pub event_buffer: VecDeque<OutEvent>,
+    pub profile_data: Option<ProfileData>,
+    pub profiler_available: bool,
+    pub profiler_running: bool,
 }
 
 impl RoomSharedState {
@@ -258,6 +286,20 @@ impl Room {
             .contains_key(&player_index)
     }
 
+    pub fn profiler_start(&self, hook_count: i32, window_seconds: i32) {
+        let _ = self
+            .command_tx
+            .send(RoomCommand::ProfilerStart { hook_count, window_seconds });
+    }
+
+    pub fn profiler_stop(&self) {
+        let _ = self.command_tx.send(RoomCommand::ProfilerStop);
+    }
+
+    pub fn profiler_reset(&self) {
+        let _ = self.command_tx.send(RoomCommand::ProfilerReset);
+    }
+
     pub fn poll_events(&self, player_index: i32) -> Vec<serde_json::Value> {
         let mut shared = self.shared.write().unwrap();
         if let Some(q) = shared.out_queues.get_mut(&player_index) {
@@ -323,6 +365,9 @@ impl RoomManager {
             out_queues,
             log_buffer: VecDeque::new(),
             event_buffer: VecDeque::new(),
+            profile_data: None,
+            profiler_available: false,
+            profiler_running: false,
         }));
 
         let shared_for_room = shared.clone();
@@ -1213,6 +1258,13 @@ fn room_thread(
     }
     emit_log("INF", "System", "Room started successfully".to_string());
 
+    // Profiler (Rust-native)
+    let profiler_state = Arc::new(Mutex::new(profiler::ProfilerState::new()));
+    {
+        shared.write().unwrap().profiler_available = true;
+    }
+    let mut last_profile_extract = std::time::Instant::now();
+
     // Fire _roomloaded
     {
         let player_indices: Vec<i32> = shared.read().unwrap().players.keys().cloned().collect();
@@ -1341,6 +1393,36 @@ fn room_thread(
                         }
                     }
                 }
+                RoomCommand::ProfilerStart {
+                    hook_count,
+                    window_seconds,
+                } => {
+                    {
+                        let mut state = profiler_state.lock().unwrap();
+                        state.configure(window_seconds, 32);
+                    }
+                    let state_for_hook = profiler_state.clone();
+                    lua.set_hook(
+                        mlua::HookTriggers::new()
+                            .every_nth_instruction(hook_count as u32),
+                        move |lua_ctx, _debug| {
+                            state_for_hook.lock().unwrap().record_sample(lua_ctx);
+                            Ok(mlua::VmState::Continue)
+                        },
+                    );
+                    shared.write().unwrap().profiler_running = true;
+                }
+                RoomCommand::ProfilerStop => {
+                    lua.remove_hook();
+                    shared.write().unwrap().profiler_running = false;
+                }
+                RoomCommand::ProfilerReset => {
+                    lua.remove_hook();
+                    profiler_state.lock().unwrap().reset();
+                    let mut s = shared.write().unwrap();
+                    s.profiler_running = false;
+                    s.profile_data = None;
+                }
                 RoomCommand::Stop { reason } => {
                     let data = serde_json::json!({"reason": reason}).to_string();
                     dispatch_lua_event(&lua, &event_handlers, "_roomover", &data, -1, &emit_log);
@@ -1351,6 +1433,16 @@ fn room_thread(
                 }
             },
             Err(mpsc::error::TryRecvError::Empty) => {
+                if last_profile_extract.elapsed() > std::time::Duration::from_millis(500)
+                {
+                    let is_running = shared.read().unwrap().profiler_running;
+                    if is_running {
+                        let mut state = profiler_state.lock().unwrap();
+                        let data = state.to_profile_data(true);
+                        shared.write().unwrap().profile_data = Some(data);
+                    }
+                    last_profile_extract = std::time::Instant::now();
+                }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(mpsc::error::TryRecvError::Disconnected) => {

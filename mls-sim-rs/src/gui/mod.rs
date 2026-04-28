@@ -1,5 +1,6 @@
 mod console;
 mod events;
+mod profiler;
 mod rooms;
 mod settings;
 mod state_view;
@@ -19,6 +20,7 @@ pub enum Tab {
     Console,
     Events,
     State,
+    Profiler,
     Settings,
 }
 
@@ -58,6 +60,13 @@ pub struct GuiApp {
     pub settings_host: String,
     pub settings_port: String,
     pub settings_archive_dir: String,
+
+    // Profiler
+    pub profiler_room_id: Option<String>,
+    pub profiler_hook_count: i32,
+    pub profiler_window: i32,
+    pub profiler_frame_ms: f32,
+    pub profiler_hover_info: String,
 
     // Status
     pub save_msg: Option<(String, bool, f64)>,
@@ -107,6 +116,11 @@ impl GuiApp {
             auto_scroll: true,
             state_room_id: None,
             state_json_text: String::new(),
+            profiler_room_id: None,
+            profiler_hook_count: 5000,
+            profiler_window: 15,
+            profiler_frame_ms: 50.0,
+            profiler_hover_info: String::new(),
             settings_host: host,
             settings_port: port,
             settings_archive_dir: archive_dir,
@@ -216,6 +230,7 @@ impl eframe::App for GuiApp {
                         (Tab::Console, "控制台"),
                         (Tab::Events, "出站事件"),
                         (Tab::State, "状态"),
+                        (Tab::Profiler, "性能分析"),
                         (Tab::Settings, "设置"),
                     ] {
                         let selected = self.active_tab == tab;
@@ -244,6 +259,7 @@ impl eframe::App for GuiApp {
             Tab::Console => self.console_tab(ctx),
             Tab::Events => self.events_tab(ctx),
             Tab::State => self.state_tab(ctx),
+            Tab::Profiler => self.profiler_tab(ctx),
             Tab::Settings => self.settings_tab(ctx),
         }
 
