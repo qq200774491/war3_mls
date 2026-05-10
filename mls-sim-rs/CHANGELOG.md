@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.1 (2026-05-10)
+
+### 修复
+- 修复自定义 `require` 不识别 Lua 5.3 内置模块的问题
+  - `require 'utf8'`、`require 'math'`、`require 'string'` 等调用会报 `module not found`
+  - 在文件搜索前新增全局表查找，已注册的内置模块（utf8、math、string、table、coroutine、os、io、debug）和项目自定义模块（json、Log、Timer 等）均可通过 `require` 正常加载
+
 ## v0.5.0 (2026-04-28)
 
 ### 新功能
